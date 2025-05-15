@@ -351,16 +351,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Force initialize the client with the current key
           // This ensures we're checking with the most recent API key
-          const ElevenLabsSDK = require('elevenlabs');
-          const client = new ElevenLabsSDK.ElevenLabs({
-            apiKey: apiKey
-          });
+          const { ElevenLabs } = require('elevenlabs');
           
           // Make a test request to verify the key
           let isValid = false;
           try {
+            const client = new ElevenLabs({
+              apiKey: apiKey
+            });
+            
             const voices = await client.voices.getAll();
-            isValid = !!voices && Array.isArray(voices);
+            isValid = !!voices;
+            console.log("API key validation successful");
           } catch (err) {
             console.error("API key validation error:", err);
             isValid = false;

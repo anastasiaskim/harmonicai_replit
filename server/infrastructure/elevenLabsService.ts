@@ -6,10 +6,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuid } from 'uuid';
-import { VoiceSettings } from 'elevenlabs/api';
-// Import based on official examples from elevenlabs-js
-import * as ElevenLabsSDK from 'elevenlabs';
-import { Readable } from 'stream';
+// Import based on official GitHub examples from elevenlabs-js
+import { ElevenLabs } from 'elevenlabs';
 
 // Get audio directory (create if needed)
 const audioDir = path.join(process.cwd(), 'audio');
@@ -23,6 +21,14 @@ interface ElevenLabsConfig {
   voiceMapping: {
     [key: string]: string;
   };
+}
+
+// Define voice settings interface based on ElevenLabs documentation
+interface VoiceSettings {
+  stability: number;
+  similarity_boost: number;
+  style?: number;
+  use_speaker_boost?: boolean;
 }
 
 class ElevenLabsService {
@@ -50,11 +56,16 @@ class ElevenLabsService {
   
   private initClient() {
     if (this.config.apiKey) {
-      // Using the correct instantiation method as per elevenlabs-js docs
-      this.client = new ElevenLabsSDK.ElevenLabs({
-        apiKey: this.config.apiKey,
-      });
-      console.log('ElevenLabs client initialized with API key');
+      try {
+        // Use require instead of import to avoid TypeScript errors
+        const elevenlabs = require('elevenlabs');
+        this.client = new elevenlabs.ElevenLabs({
+          apiKey: this.config.apiKey,
+        });
+        console.log('ElevenLabs client initialized with API key');
+      } catch (error) {
+        console.error('Error initializing ElevenLabs client:', error);
+      }
     } else {
       console.warn('No ElevenLabs API key found. Voice synthesis will not work.');
     }
@@ -72,7 +83,8 @@ class ElevenLabsService {
     try {
       // Make a simple request to check if the API key is valid
       const voices = await this.client.voices.getAll();
-      return !!voices && Array.isArray(voices);
+      console.log('API key validation successful', voices ? 'voices found' : 'no voices found');
+      return !!voices;
     } catch (error) {
       console.error('Error checking ElevenLabs API key validity:', error);
       return false;
@@ -106,49 +118,102 @@ class ElevenLabsService {
       console.log(`Generating audio with ElevenLabs SDK using voice ID: ${elevenLabsVoiceId}`);
       console.log(`Text length: ${text.length} characters`);
       
-      // Define voice settings according to ElevenLabs docs
-      const voiceSettings: VoiceSettings = {
+      // Define voice settings
+      const voiceSettings = {
         stability: 0.5,
         similarity_boost: 0.5,
         style: 0.0,
         use_speaker_boost: true
       };
       
-      // Buffer approach - based on elevenlabs-nextjs example
-      const audioBuffer = await this.client.generate({
-        voice: elevenLabsVoiceId,
-        text: text,
-        model_id: "eleven_multilingual_v2",
-        voice_settings: voiceSettings
-      });
-      
-      // Write the buffer to a file
-      fs.writeFileSync(filePath, Buffer.from(audioBuffer));
-      
-      // Check if the file was created successfully and has content
-      if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        if (stats.size > 0) {
-          console.log(`Audio file successfully saved at ${filePath} (${stats.size} bytes)`);
-          return {
-            success: true,
-            filePath,
-          };
+      try {
+        // Generate audio using the SDK
+        const audio = await this.client.generate({
+          voice: elevenLabsVoiceId,
+          text: text,
+          model_id: "eleven_multilingual_v2",
+          voice_settings: voiceSettings
+        });
+        
+        // Write the audio buffer to a file
+        fs.writeFileSync(filePath, audio);
+        
+        // Check if the file was created successfully and has content
+        if (fs.existsSync(filePath)) {
+          const stats = fs.statSync(filePath);
+          if (stats.size > 0) {
+            console.log(`Audio file successfully saved at ${filePath} (${stats.size} bytes)`);
+            return {
+              success: true,
+              filePath,
+            };
+          } else {
+            console.error('File was created but is empty');
+            return {
+              success: false,
+              filePath,
+              error: 'Audio file is empty, possibly due to API quota limitations'
+            };
+          }
         } else {
-          console.error('File was created but is empty');
+          console.error('Failed to create audio file');
           return {
             success: false,
             filePath,
-            error: 'Audio file is empty, possibly due to API quota limitations'
+            error: 'Failed to create audio file'
           };
         }
-      } else {
-        console.error('Failed to create audio file');
-        return {
-          success: false,
-          filePath,
-          error: 'Failed to create audio file'
-        };
+      } catch (generateError: any) {
+        console.error('Error in ElevenLabs generate method:', generateError);
+        
+        // Try alternative approach for older SDK versions
+        if (this.client.textToSpeech) {
+          console.log('Trying alternative textToSpeech method...');
+          try {
+            const result = await this.client.textToSpeech.convert(elevenLabsVoiceId, {
+              text,
+              model_id: "eleven_multilingual_v2",
+              voice_settings: voiceSettings
+            });
+            
+            // Create file stream and pipe the audio data
+            const fileStream = fs.createWriteStream(filePath);
+            result.pipe(fileStream);
+            
+            return new Promise((resolve) => {
+              fileStream.on('finish', () => {
+                const stats = fs.statSync(filePath);
+                if (stats.size > 0) {
+                  console.log(`Audio file successfully saved at ${filePath} (${stats.size} bytes)`);
+                  resolve({
+                    success: true,
+                    filePath,
+                  });
+                } else {
+                  console.error('File was created but is empty');
+                  resolve({
+                    success: false,
+                    filePath,
+                    error: 'Audio file is empty, possibly due to API quota limitations'
+                  });
+                }
+              });
+              
+              fileStream.on('error', (err) => {
+                console.error('File stream error:', err);
+                resolve({
+                  success: false,
+                  filePath,
+                  error: `File stream error: ${err.message}`
+                });
+              });
+            });
+          } catch (textToSpeechError) {
+            throw textToSpeechError; // Pass to main error handler
+          }
+        } else {
+          throw generateError; // Pass to main error handler
+        }
       }
     } catch (error: any) {
       console.error('Error generating audio with ElevenLabs:', error);
