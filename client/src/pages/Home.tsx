@@ -124,8 +124,14 @@ const Home = () => {
         });
         
         // Set a single chapter with the entire text
-        setChapters([{ title: 'Complete Text', text: originalText }]);
+        const singleChapter = { title: 'Complete Text', text: result.text };
+        setChapters([singleChapter]);
         setWasChunked(true); // Consider it as "processed" so we can proceed
+        
+        // If we have text, proceed to audio generation
+        if (result.text) {
+          setTimeout(() => handleGenerateAudiobook(), 500);
+        }
       }
     } else if (error) {
       setError(error);

@@ -163,7 +163,7 @@ const TextPreviewSection: React.FC<TextPreviewSectionProps> = ({
                 </div>
                 
                 <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
-                  <div className="whitespace-pre-line">{currentChapter?.text}</div>
+                  <div className="whitespace-pre-line">{currentChapter?.text || text}</div>
                 </ScrollArea>
               </div>
             ) : (
