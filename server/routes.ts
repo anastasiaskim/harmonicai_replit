@@ -339,11 +339,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const exists = !!apiKey && apiKey.length > 0;
       
       // For Eleven Labs specifically, test the key validity
-      if (key === 'ELEVENLABS_API_KEY' && exists) {
+      if (key === 'ELEVENLABS_API_KEY') {
         try {
+          // If the key doesn't exist, return exists=false immediately
+          if (!exists) {
+            return res.json({ exists, isValid: false });
+          }
+          
           // Import and use the ElevenLabs service to check key validity
           const { elevenLabsService } = await import('./infrastructure/elevenLabsService');
-          const isValid = await elevenLabsService.checkApiKeyValidity();
+          
+          // Force initialize the client with the current key
+          // This ensures we're checking with the most recent API key
+          const ElevenLabsSDK = require('elevenlabs');
+          const client = new ElevenLabsSDK.ElevenLabs({
+            apiKey: apiKey
+          });
+          
+          // Make a test request to verify the key
+          let isValid = false;
+          try {
+            const voices = await client.voices.getAll();
+            isValid = !!voices && Array.isArray(voices);
+          } catch (err) {
+            console.error("API key validation error:", err);
+            isValid = false;
+          }
+          
           return res.json({ exists, isValid });
         } catch (error) {
           console.error("Error testing ElevenLabs API key:", error);
