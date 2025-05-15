@@ -67,11 +67,11 @@ export type Chapter = typeof chapters.$inferSelect;
 
 // Request validation schemas
 export const textToSpeechSchema = z.object({
-  text: z.string().max(50000, "Text must be less than 50,000 characters"),
+  text: z.string(), // Removed the max limit since we're handling chunking
   voice: z.string(),
   chapters: z.array(z.object({
     title: z.string(),
-    text: z.string(),
+    text: z.string(), // The text chunking in audioService will handle large texts
   })),
 });
 
