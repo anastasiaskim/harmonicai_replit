@@ -45,8 +45,8 @@ export function useChapterDetection() {
         body: JSON.stringify({ text, useAI }),
       });
       
-      // Parse response as ChunkingResult
-      const result = response as ChunkingResult;
+      // Parse response as ChunkingResult (apiRequest already converts to JSON)
+      const result = response as unknown as ChunkingResult;
       
       // Show appropriate feedback based on detection result
       if (result.wasChunked) {

@@ -171,12 +171,16 @@ export function ChaptersSection({
             
             <div className="space-y-6">
               {/* AI Confidence Component */}
-              {aiDetection && Object.keys(confidenceLevels || {}).length > 0 && (
-                <AIChapterConfidence 
-                  confidenceLevels={confidenceLevels || {}} 
-                  usedAI={Boolean(aiDetection)}
-                />
-              )}
+              {aiDetection && confidenceLevels && Object.keys(confidenceLevels).length > 0 && 
+                Object.entries(confidenceLevels).map(([title, confidence]) => (
+                  <AIChapterConfidence 
+                    key={title}
+                    title={title}
+                    confidence={confidence}
+                    showDetails={true}
+                  />
+                ))
+              }
               
               {/* Statistics Card */}
               <div className="bg-white shadow-sm border rounded-lg p-4">
@@ -220,7 +224,7 @@ export function ChaptersSection({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="md:col-span-2">
               <ApiKeyManagement 
-                service="google_ai"
+                serviceId="google_ai"
                 serviceName="Google AI"
                 description="Enter your Google AI API key to enable advanced chapter detection with AI."
               />

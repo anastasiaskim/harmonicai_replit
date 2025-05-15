@@ -1,93 +1,114 @@
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import React, { useState } from 'react';
 import { apiRequest } from '@/lib/queryClient';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Loader2, CheckCircle2, AlertCircle, Key } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Loader2, CheckCircle, XCircle, KeyRound } from 'lucide-react';
 
 interface ApiKeyManagementProps {
-  service: string;
   serviceName: string;
+  serviceId: string;
   description: string;
   onKeyValidated?: (isValid: boolean) => void;
 }
 
-export function ApiKeyManagement({ 
-  service, 
-  serviceName, 
+/**
+ * Component for API key management
+ * 
+ * Allows users to enter and validate API keys for external services
+ */
+export function ApiKeyManagement({
+  serviceName,
+  serviceId,
   description,
-  onKeyValidated 
+  onKeyValidated,
 }: ApiKeyManagementProps) {
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState<string>('');
+  const [isValidating, setIsValidating] = useState<boolean>(false);
+  const [isValid, setIsValid] = useState<boolean | null>(null);
+  const [validationMessage, setValidationMessage] = useState<string>('');
   const { toast } = useToast();
   
-  // Mutation for validating and saving API key
-  const validateKeyMutation = useMutation({
-    mutationFn: async () => {
-      return await apiRequest('/api/api-keys', {
-        method: 'POST',
-        body: JSON.stringify({
-          service,
-          key: apiKey
-        }),
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-    },
-    onSuccess: async (response) => {
-      const data = await response.json();
-      
-      // Show success message
-      toast({
-        title: data.success ? "API Key Validated" : "API Key Invalid",
-        description: data.message,
-        variant: data.success ? "default" : "destructive",
-      });
-      
-      // Call the callback if provided
-      if (onKeyValidated) {
-        onKeyValidated(data.success);
-      }
-    },
-    onError: (error) => {
-      console.error('Error validating API key:', error);
-      toast({
-        title: "Validation Failed",
-        description: error instanceof Error ? error.message : "Failed to validate API key",
-        variant: "destructive",
-      });
-      
-      // Call the callback with false if provided
-      if (onKeyValidated) {
-        onKeyValidated(false);
-      }
-    }
-  });
-  
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     if (!apiKey.trim()) {
       toast({
-        title: "API Key Required",
-        description: `Please enter your ${serviceName} API key`,
-        variant: "destructive",
+        title: 'API Key Required',
+        description: 'Please enter an API key to validate.',
+        variant: 'destructive',
       });
       return;
     }
     
-    validateKeyMutation.mutate();
+    try {
+      setIsValidating(true);
+      setValidationMessage('');
+      
+      // Send the API key to the server for validation
+      const response = await apiRequest('/api/api-keys', {
+        method: 'POST',
+        body: JSON.stringify({
+          service: serviceId,
+          key: apiKey,
+        }),
+      });
+      
+      // Convert the response to the expected type
+      const result = response as unknown as { 
+        success: boolean; 
+        message: string 
+      };
+      
+      // Update validation state
+      setIsValid(result.success);
+      setValidationMessage(result.message);
+      
+      // Notify parent component of validation result
+      if (onKeyValidated) {
+        onKeyValidated(result.success);
+      }
+      
+      // Show toast notification
+      toast({
+        title: result.success ? 'API Key Validated' : 'API Key Invalid',
+        description: result.message,
+        variant: result.success ? 'default' : 'destructive',
+      });
+    } catch (error) {
+      console.error('API key validation error:', error);
+      
+      setIsValid(false);
+      setValidationMessage('An error occurred while validating the API key.');
+      
+      if (onKeyValidated) {
+        onKeyValidated(false);
+      }
+      
+      toast({
+        title: 'Validation Error',
+        description: 'Failed to validate API key. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsValidating(false);
+    }
   };
   
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Key className="h-5 w-5" />
+        <CardTitle className="flex items-center">
+          <KeyRound className="mr-2 h-5 w-5" />
           {serviceName} API Key
         </CardTitle>
         <CardDescription>{description}</CardDescription>
@@ -95,75 +116,49 @@ export function ApiKeyManagement({
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor={`${service}-api-key`}>API Key</Label>
-            <Input
-              id={`${service}-api-key`}
-              type="password"
-              placeholder={`Enter your ${serviceName} API key`}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              className="font-mono"
-            />
+            <Label htmlFor={`${serviceId}-api-key`}>API Key</Label>
+            <div className="flex space-x-2">
+              <Input
+                id={`${serviceId}-api-key`}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Enter your API key"
+                type="password"
+                className="flex-1"
+                autoComplete="off"
+              />
+              <Button
+                type="submit"
+                disabled={isValidating || !apiKey.trim()}
+                className="w-24 min-w-24"
+              >
+                {isValidating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  'Validate'
+                )}
+              </Button>
+            </div>
           </div>
-          
-          {validateKeyMutation.isPending && (
-            <Alert>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <AlertTitle>Validating...</AlertTitle>
-              <AlertDescription>
-                Validating your API key with {serviceName}
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          {validateKeyMutation.isSuccess && validateKeyMutation.data && (
-            <>
-              {(validateKeyMutation.data as any).success ? (
-                <Alert className="bg-green-50 border-green-200">
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  <AlertTitle>API Key Valid</AlertTitle>
-                  <AlertDescription>
-                    Your {serviceName} API key has been validated and saved
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>API Key Invalid</AlertTitle>
-                  <AlertDescription>
-                    {(validateKeyMutation.data as any).message}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </>
-          )}
-          
-          {validateKeyMutation.isError && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Validation Error</AlertTitle>
-              <AlertDescription>
-                {validateKeyMutation.error instanceof Error 
-                  ? validateKeyMutation.error.message 
-                  : "Failed to validate API key"
-                }
-              </AlertDescription>
-            </Alert>
-          )}
         </form>
+        
+        {isValid !== null && (
+          <div className={`mt-4 p-3 rounded-md ${
+            isValid ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
+          }`}>
+            <div className="flex items-center">
+              {isValid ? (
+                <CheckCircle className="h-5 w-5 mr-2 text-green-500" />
+              ) : (
+                <XCircle className="h-5 w-5 mr-2 text-red-500" />
+              )}
+              <p className="text-sm">{validationMessage}</p>
+            </div>
+          </div>
+        )}
       </CardContent>
-      <CardFooter>
-        <Button 
-          type="submit" 
-          onClick={handleSubmit}
-          disabled={validateKeyMutation.isPending || !apiKey.trim()}
-          className="w-full"
-        >
-          {validateKeyMutation.isPending && (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          )}
-          Validate and Save API Key
-        </Button>
+      <CardFooter className="text-xs text-muted-foreground">
+        Your API key is securely stored and never shared with third parties.
       </CardFooter>
     </Card>
   );
