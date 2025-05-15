@@ -1,10 +1,12 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
-import { Upload, FileText, AlertCircle } from 'lucide-react';
+import { Upload, FileText, AlertCircle, BookOpen, FileIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { formatFileSize } from '@/lib/fileHelpers';
+import { parseEpubFile, EpubParseResult } from '@/lib/epubParser';
+import EpubPreviewSection from '@/components/EpubPreviewSection';
 
 interface ProcessedResult {
   text: string;
@@ -33,6 +35,8 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [epubData, setEpubData] = useState<EpubParseResult | null>(null);
+  const [isEpubPreviewMode, setIsEpubPreviewMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -42,6 +46,8 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
   const resetState = () => {
     setSelectedFile(null);
     setError(null);
+    setEpubData(null);
+    setIsEpubPreviewMode(false);
   };
 
   const handleDrag = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -87,6 +93,82 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
     return true;
   };
 
+  // Process EPUB files client-side
+  const processEpubFile = async (file: File) => {
+    try {
+      setIsProcessing(true);
+      
+      // Parse the EPUB file
+      const result = await parseEpubFile(file);
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to parse EPUB file');
+      }
+      
+      // Set EPUB data for preview
+      setEpubData(result);
+      setIsEpubPreviewMode(true);
+      
+      toast({
+        title: "EPUB File Loaded",
+        description: `${file.name} has been parsed and ${result.chapters.length} chapters were detected.`,
+      });
+      
+      // Return success
+      return true;
+    } catch (error) {
+      console.error('Error processing EPUB file:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to process EPUB file';
+      
+      setError(errorMessage);
+      toast({
+        title: "EPUB Processing Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+      
+      return false;
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+  
+  // Handle processed EPUB content
+  const handleEpubContent = (content: string, title?: string) => {
+    if (!content) return;
+    
+    // Create the processed result object
+    const chaptersArray = content
+      .split(/\n## /)
+      .filter(Boolean)
+      .map(section => {
+        const lines = section.split('\n');
+        const title = lines[0] || 'Untitled Chapter';
+        const text = lines.slice(1).join('\n');
+        return { title, text };
+      });
+    
+    const result: ProcessedResult = {
+      text: content,
+      chapters: chaptersArray,
+      charCount: content.length,
+      wasChunked: chaptersArray.length > 1,
+      fileMetadata: null
+    };
+    
+    // Pass to parent component
+    onTextProcessed(result);
+    
+    // Hide EPUB preview
+    setIsEpubPreviewMode(false);
+    
+    // Show success toast
+    toast({
+      title: title ? `Chapter Selected: ${title}` : "Content Processed",
+      description: `${chaptersArray.length} sections identified in the EPUB content.`,
+    });
+  };
+  
   const processFile = useCallback(async (file: File) => {
     // Reset previous states
     resetState();
@@ -98,13 +180,21 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
     
     // Set the selected file for UI display
     setSelectedFile(file);
+    
+    // Process EPUB files client-side
+    if (file.type === 'application/epub+zip') {
+      await processEpubFile(file);
+      return;
+    }
+    
+    // For other file types, send to server
     setIsProcessing(true);
     
     try {
       const formData = new FormData();
       formData.append('file', file);
       
-      // Use the new edge function endpoint
+      // Use the API endpoint
       const response = await fetch('/api/upload-ebook', {
         method: 'POST',
         body: formData,
