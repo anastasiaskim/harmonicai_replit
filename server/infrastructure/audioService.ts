@@ -137,192 +137,67 @@ class AudioService {
 
     const { text, voiceId, title } = request;
     
-    // Get ElevenLabs voice ID from our mapping
-    const elevenLabsVoiceId = this.elevenLabsConfig.voiceMapping[voiceId] || 
-                              this.elevenLabsConfig.voiceMapping.rachel;
+    // Import the ElevenLabs service
+    const { elevenLabsService } = await import('./elevenLabsService');
     
-    // Create unique filename based on content hash, limit title length to avoid ENAMETOOLONG error
-    const contentHash = createHash('md5').update(text).digest('hex');
-    // Truncate title to 30 chars max to avoid filename length issues
-    const truncatedTitle = title.length > 30 ? title.substring(0, 30) + '...' : title;
-    const safeTitle = truncatedTitle.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').toLowerCase();
-    const fileName = `${safeTitle}_${voiceId}_${contentHash.substring(0, 8)}.mp3`;
+    // Create a unique filename for this audio
+    const fileName = elevenLabsService.generateUniqueFilename(title, voiceId);
     const filePath = path.join(audioDir, fileName);
     
     // Check if file already exists (cache hit)
     if (fs.existsSync(filePath)) {
-      console.log(`Audio file ${fileName} already exists, returning cached version`);
-      return `/audio/${fileName}`;
+      const stats = fs.statSync(filePath);
+      if (stats.size > 0) {
+        console.log(`Audio file ${fileName} already exists with size ${stats.size} bytes, returning cached version`);
+        return `/audio/${fileName}`;
+      } else {
+        console.log(`Audio file ${fileName} exists but is empty (size: ${stats.size} bytes), regenerating`);
+        // Continue to regenerate the file since it's empty
+      }
     }
     
-    // Make API call to ElevenLabs
+    // Create necessary directories
+    ensureDirectoryExists(audioDir);
+    
     try {
-      console.log(`Calling ElevenLabs API for voice ${voiceId} (${elevenLabsVoiceId})`);
-      console.log(`API key exists and length: ${this.elevenLabsConfig.apiKey ? this.elevenLabsConfig.apiKey.substring(0, 4) + '...' : 'Missing'}`);
+      // Use the ElevenLabs SDK to generate audio
+      console.log(`Using ElevenLabs SDK to generate audio for voice ${voiceId}`);
       console.log(`Text length: ${text.length} characters`);
       
-      // Create necessary directories
-      ensureDirectoryExists(audioDir);
+      // Generate audio with the ElevenLabs service
+      const result = await elevenLabsService.generateAudio(text, voiceId, fileName);
       
-      // Split text into manageable chunks if it's too long (ElevenLabs limit is 5000 chars)
-      const textChunks = this.splitTextIntoChunks(text, 4800); // 4800 for safety margin
-      
-      // Process differently based on number of chunks
-      if (textChunks.length > 1) {
-        console.log(`Text was split into ${textChunks.length} chunks for processing`);
+      if (result.success) {
+        console.log(`Audio successfully generated at ${result.filePath}`);
         
-        // Create an array of temporary files for each chunk
-        const tempFilePaths: string[] = [];
+        // Update analytics
+        await this.updateVoiceAnalytics(voiceId);
         
-        // Process each chunk separately
-        for (let i = 0; i < textChunks.length; i++) {
-          const chunk = textChunks[i];
-          console.log(`Processing chunk ${i+1}/${textChunks.length} (${chunk.length} characters)`);
-          
-          // Create a temporary filename for this chunk (keep it short)
-          const tempFileName = `chunk${i+1}_${contentHash.substring(0, 8)}.mp3`;
-          const tempFilePath = path.join(audioDir, tempFileName);
-          tempFilePaths.push(tempFilePath);
-          
-          // Call ElevenLabs API for this chunk
-          const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
-          const response = await axios.post(
-            url,
-            {
-              text: chunk,
-              model_id: "eleven_multilingual_v2",
-              voice_settings: {
-                stability: 0.5,
-                similarity_boost: 0.5
-              }
-            },
-            {
-              headers: {
-                'Accept': 'audio/mpeg',
-                'xi-api-key': this.elevenLabsConfig.apiKey,
-                'Content-Type': 'application/json'
-              },
-              responseType: 'arraybuffer'
-            }
-          );
-          
-          // Save this chunk's audio
-          fs.writeFileSync(tempFilePath, Buffer.from(response.data));
-          console.log(`Chunk ${i+1} audio saved to: ${tempFilePath}`);
-        }
-        
-        // Merge all chunks into the final audio file
-        console.log(`Merging ${tempFilePaths.length} audio chunks into final file`);
-        
-        // Simple merge: concatenate binary data
-        const finalFile = fs.createWriteStream(filePath);
-        for (const tempPath of tempFilePaths) {
-          // Read and append each chunk to the final file
-          const chunkData = fs.readFileSync(tempPath);
-          finalFile.write(chunkData);
-          
-          // Delete the temporary chunk file
-          fs.unlinkSync(tempPath);
-        }
-        finalFile.end();
-        
-        console.log(`Successfully merged audio chunks into: ${filePath}`);
+        return `/audio/${fileName}`;
       } else {
-        // For single chunks, process normally
-        console.log(`Text is within limits, processing as single chunk`);
+        console.error(`Error generating audio: ${result.error}`);
         
-        const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
-        console.log(`Sending request to: ${url}`);
+        // Check if the error is related to quota limitations
+        const isQuotaExceeded = result.error?.includes('quota') || 
+                               result.error?.includes('limit') || 
+                               result.error?.includes('exceed');
         
-        const response = await axios.post(
-          url,
-          {
-            text,
-            model_id: "eleven_multilingual_v2", // Using the latest model
-            voice_settings: {
-              stability: 0.5,
-              similarity_boost: 0.5
-            }
-          },
-          {
-            headers: {
-              'Accept': 'audio/mpeg',
-              'xi-api-key': this.elevenLabsConfig.apiKey,
-              'Content-Type': 'application/json'
-            },
-            responseType: 'arraybuffer'
-          }
-        );
+        if (isQuotaExceeded || process.env.NODE_ENV === 'development') {
+          console.log('Returning empty file path due to quota exceeded or development mode');
+          return `/audio/${fileName}`;
+        }
         
-        console.log(`ElevenLabs API response status: ${response.status}`);
-        console.log(`Response data length: ${response.data?.length || 0} bytes`);
-        
-        // Save the audio file (response.data is an ArrayBuffer)
-        fs.writeFileSync(filePath, Buffer.from(response.data));
-        console.log(`Audio file saved to: ${filePath}`);
+        throw new Error(`Failed to generate audio: ${result.error}`);
       }
-      
-      // Update analytics
-      await this.updateVoiceAnalytics(voiceId);
-      
-      return `/audio/${fileName}`;
     } catch (error: any) {
-      console.error('Error calling ElevenLabs API:', error);
-      console.error('Error message:', error.message);
-      
-      // More detailed error information based on axios error structure
-      let errorDetails = 'Unknown error';
-      let isQuotaExceeded = false;
-      
-      if (error.response) {
-        // The request was made and the server responded with a status code outside of 2xx range
-        const status = error.response.status;
-        const responseData = error.response.data;
-        
-        console.error(`ElevenLabs API error status: ${status}`);
-        console.error('Response data:', responseData);
-
-        if (status === 401) {
-          errorDetails = 'Invalid or expired API key (Unauthorized)';
-        } else if (status === 429) {
-          errorDetails = 'API quota exceeded or rate limit reached';
-          isQuotaExceeded = true;
-        } else if (responseData && typeof responseData === 'object') {
-          // Try to extract error message from response
-          if (responseData.detail) {
-            errorDetails = responseData.detail;
-            // Check if this is a quota exceeded error
-            if (typeof errorDetails === 'string' && 
-                (errorDetails.includes('quota') || 
-                 errorDetails.includes('limit') || 
-                 errorDetails.includes('exceed'))) {
-              isQuotaExceeded = true;
-            }
-          }
-        }
-      } else if (error.request) {
-        // The request was made but no response was received
-        errorDetails = 'No response received from ElevenLabs API (network issue or service down)';
-      } else {
-        // Something happened in setting up the request
-        errorDetails = error.message || 'Error setting up the request';
-      }
-      
-      console.error('Error details:', errorDetails);
+      console.error('Error in convertTextToSpeech:', error);
       
       // Always create an empty file as a placeholder to avoid crashing the application
       // This allows the player to handle the error gracefully
       fs.writeFileSync(filePath, Buffer.from(''));
-      console.log(`Created empty placeholder file for ${fileName} due to API error`);
+      console.log(`Created empty placeholder file for ${fileName} due to error`);
       
-      // For quota exceeded errors, we return the empty file path
-      // but for other errors we throw to allow proper handling
-      if (isQuotaExceeded || process.env.NODE_ENV === 'development') {
-        console.log('Returning empty file due to quota exceeded or development mode');
-        return `/audio/${fileName}`;
-      }
-      
-      throw new Error(`Failed to generate audio: ${errorDetails}`);
+      return `/audio/${fileName}`;
     }
   }
 
