@@ -7,6 +7,7 @@ import VoiceSelectionSection from '@/components/VoiceSelectionSection';
 import GenerateSection from '@/components/GenerateSection';
 import TextPreviewSection from '@/components/TextPreviewSection';
 import ChaptersSection from '@/components/ChaptersSection';
+import QuickConversionSection from '@/components/QuickConversionSection';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 
