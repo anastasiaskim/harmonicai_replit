@@ -1,6 +1,7 @@
 import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Sparkles, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface AIChapterConfidenceProps {
   confidenceLevels: Record<string, number>;
@@ -8,60 +9,57 @@ interface AIChapterConfidenceProps {
 }
 
 export function AIChapterConfidence({ confidenceLevels, usedAI }: AIChapterConfidenceProps) {
-  // If AI wasn't used or no confidence levels are available, don't show anything
+  // If AI was not used or there are no confidence levels, return null
   if (!usedAI || !confidenceLevels || Object.keys(confidenceLevels).length === 0) {
     return null;
   }
   
-  // Convert confidence levels to array for rendering
-  const confidenceData = Object.entries(confidenceLevels).map(([title, confidence]) => ({
-    title,
-    confidence,
-    quality: getConfidenceQuality(confidence)
-  }));
-  
   return (
     <Card className="w-full">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-medium">AI Chapter Detection</CardTitle>
-          <Badge variant="outline" className="bg-blue-50 text-blue-700 hover:bg-blue-100">
-            AI Powered
-          </Badge>
-        </div>
-        <CardDescription>
-          AI confidence levels for detected chapter headings
-        </CardDescription>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base font-medium">
+          <Sparkles className="h-5 w-5 text-purple-500" />
+          AI Detection Confidence
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger>
+                <Info className="h-4 w-4 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent side="right" className="max-w-sm">
+                <p>
+                  These confidence scores show how certain our AI is about each detected chapter. 
+                  Higher confidence means more reliable detection. You may want to review low-confidence chapters.
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="space-y-4">
-          {confidenceData.map((chapter, index) => (
-            <div key={index} className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="font-medium truncate max-w-[70%]" title={chapter.title}>
-                  {chapter.title}
+        <div className="space-y-3">
+          {Object.entries(confidenceLevels).map(([chapter, confidence]) => (
+            <div key={chapter} className="space-y-1">
+              <div className="flex justify-between items-center text-sm">
+                <span className="font-medium truncate" title={chapter}>
+                  {chapter.length > 30 ? `${chapter.substring(0, 30)}...` : chapter}
                 </span>
-                <span className={getConfidenceTextColor(chapter.quality)}>
-                  {(chapter.confidence * 100).toFixed(0)}%
+                <span className={`font-mono ${getConfidenceTextColor(getConfidenceQuality(confidence))}`}>
+                  {Math.round(confidence * 100)}%
                 </span>
               </div>
               <Progress 
-                value={chapter.confidence * 100} 
-                className={getConfidenceProgressColor(chapter.quality)}
+                value={confidence * 100} 
+                className={getConfidenceProgressColor(getConfidenceQuality(confidence))}
               />
             </div>
           ))}
-        </div>
-        
-        <div className="mt-6 pt-4 border-t border-gray-100 text-sm text-gray-500">
-          <p>Higher confidence indicates better chapter detection accuracy.</p>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-// Helper functions for confidence level styling
+// Helper functions
 function getConfidenceQuality(confidence: number): 'high' | 'medium' | 'low' {
   if (confidence >= 0.8) return 'high';
   if (confidence >= 0.5) return 'medium';
@@ -70,18 +68,18 @@ function getConfidenceQuality(confidence: number): 'high' | 'medium' | 'low' {
 
 function getConfidenceTextColor(quality: 'high' | 'medium' | 'low'): string {
   switch (quality) {
-    case 'high': return 'text-green-600 font-medium';
-    case 'medium': return 'text-amber-600 font-medium';
-    case 'low': return 'text-red-600 font-medium';
-    default: return 'text-gray-600';
+    case 'high': return 'text-green-600';
+    case 'medium': return 'text-amber-600';
+    case 'low': return 'text-red-600';
+    default: return '';
   }
 }
 
 function getConfidenceProgressColor(quality: 'high' | 'medium' | 'low'): string {
   switch (quality) {
     case 'high': return 'bg-green-100 [&>div]:bg-green-600';
-    case 'medium': return 'bg-amber-100 [&>div]:bg-amber-500';
-    case 'low': return 'bg-red-100 [&>div]:bg-red-500';
+    case 'medium': return 'bg-amber-100 [&>div]:bg-amber-600';
+    case 'low': return 'bg-red-100 [&>div]:bg-red-600';
     default: return '';
   }
 }

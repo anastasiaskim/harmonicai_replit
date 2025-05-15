@@ -7,7 +7,9 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChaptersSection } from '@/components/ChaptersSection';
 import { ManualChapterSplitSection } from '@/components/ManualChapterSplitSection';
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AIChapterConfidence } from '@/components/AIChapterConfidence';
+import { ApiKeyManagement } from '@/components/ApiKeyManagement';
+import { AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 
 interface Chapter {
   title: string;
@@ -32,15 +34,18 @@ export function TextPreviewSection({ text, onChaptersSelected }: TextPreviewSect
 
   // Mutation for AI-powered chapter detection
   const detectChaptersMutation = useMutation({
-    mutationFn: () => {
-      return apiRequest(
-        'POST',
-        '/api/detect-chapters',
-        {
+    mutationFn: async () => {
+      const response = await apiRequest('/api/detect-chapters', {
+        method: 'POST',
+        body: JSON.stringify({
           text,
-          userId: 'default'
+          useAI: true
+        }),
+        headers: {
+          'Content-Type': 'application/json'
         }
-      ).then(res => res.json());
+      });
+      return await response.json();
     },
     onSuccess: (data) => {
       setChaptersState({

@@ -1,136 +1,165 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { useMutation } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Loader2, CheckCircle2, AlertCircle, Key } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
-// Form schema
-const apiKeySchema = z.object({
-  apiKey: z.string().min(1, 'API key is required'),
-  service: z.string().default('google-ai')
-});
+interface ApiKeyManagementProps {
+  service: string;
+  serviceName: string;
+  description: string;
+  onKeyValidated?: (isValid: boolean) => void;
+}
 
-type ApiKeyFormValues = z.infer<typeof apiKeySchema>;
-
-export function ApiKeyManagement() {
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  // Define form with validation
-  const form = useForm<ApiKeyFormValues>({
-    resolver: zodResolver(apiKeySchema),
-    defaultValues: {
-      apiKey: '',
-      service: 'google-ai'
-    }
-  });
-
-  // Define mutation for API key storage
-  const apiKeyMutation = useMutation({
-    mutationFn: (values: ApiKeyFormValues) => {
-      return apiRequest(
-        'POST',
-        '/api/api-keys',
-        {
-          userId: 'default', // In a real app, this would be the actual user ID
-          service: values.service,
-          apiKey: values.apiKey
+export function ApiKeyManagement({ 
+  service, 
+  serviceName, 
+  description,
+  onKeyValidated 
+}: ApiKeyManagementProps) {
+  const [apiKey, setApiKey] = useState('');
+  const { toast } = useToast();
+  
+  // Mutation for validating and saving API key
+  const validateKeyMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest('/api/api-keys', {
+        method: 'POST',
+        body: JSON.stringify({
+          service,
+          key: apiKey
+        }),
+        headers: {
+          'Content-Type': 'application/json'
         }
-      );
-    },
-    onSuccess: () => {
-      setIsSuccess(true);
-      setErrorMessage(null);
-      // Reset form after successful submission
-      form.reset({
-        apiKey: '',
-        service: 'google-ai'
       });
     },
-    onError: (error: any) => {
-      setIsSuccess(false);
-      setErrorMessage(error.message || 'Failed to save API key');
+    onSuccess: (data) => {
+      // Show success message
+      toast({
+        title: data.success ? "API Key Validated" : "API Key Invalid",
+        description: data.message,
+        variant: data.success ? "default" : "destructive",
+      });
+      
+      // Call the callback if provided
+      if (onKeyValidated) {
+        onKeyValidated(data.success);
+      }
+    },
+    onError: (error) => {
+      console.error('Error validating API key:', error);
+      toast({
+        title: "Validation Failed",
+        description: error instanceof Error ? error.message : "Failed to validate API key",
+        variant: "destructive",
+      });
+      
+      // Call the callback with false if provided
+      if (onKeyValidated) {
+        onKeyValidated(false);
+      }
     }
   });
-
-  // Handle form submission
-  const onSubmit = (values: ApiKeyFormValues) => {
-    setIsSuccess(false);
-    setErrorMessage(null);
-    apiKeyMutation.mutate(values);
+  
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!apiKey.trim()) {
+      toast({
+        title: "API Key Required",
+        description: `Please enter your ${serviceName} API key`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    validateKeyMutation.mutate();
   };
-
+  
   return (
-    <Card className="w-full max-w-md mx-auto">
+    <Card className="w-full">
       <CardHeader>
-        <CardTitle>Google AI API Key</CardTitle>
-        <CardDescription>
-          Add your Google AI Studio API key to enable enhanced chapter detection
-        </CardDescription>
+        <CardTitle className="flex items-center gap-2">
+          <Key className="h-5 w-5" />
+          {serviceName} API Key
+        </CardTitle>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
-        {isSuccess && (
-          <Alert className="mb-4 bg-green-50 text-green-800 border-green-200">
-            <AlertTitle>Success!</AlertTitle>
-            <AlertDescription>Your API key has been saved successfully.</AlertDescription>
-          </Alert>
-        )}
-        
-        {errorMessage && (
-          <Alert className="mb-4 bg-red-50 text-red-800 border-red-200">
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{errorMessage}</AlertDescription>
-          </Alert>
-        )}
-        
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            <FormField
-              control={form.control}
-              name="apiKey"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Google AI API Key</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder="Enter your API key..." 
-                      {...field} 
-                      type="password"
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Get your API key from <a 
-                      href="https://makersuite.google.com/app/apikey" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline"
-                    >
-                      Google AI Studio
-                    </a>
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor={`${service}-api-key`}>API Key</Label>
+            <Input
+              id={`${service}-api-key`}
+              type="password"
+              placeholder={`Enter your ${serviceName} API key`}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="font-mono"
             />
-            
-            <Button 
-              type="submit" 
-              className="w-full"
-              disabled={apiKeyMutation.isPending}
-            >
-              {apiKeyMutation.isPending ? 'Saving...' : 'Save API Key'}
-            </Button>
-          </form>
-        </Form>
+          </div>
+          
+          {validateKeyMutation.isPending && (
+            <Alert>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <AlertTitle>Validating...</AlertTitle>
+              <AlertDescription>
+                Validating your API key with {serviceName}
+              </AlertDescription>
+            </Alert>
+          )}
+          
+          {validateKeyMutation.isSuccess && validateKeyMutation.data.success && (
+            <Alert className="bg-green-50 border-green-200">
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <AlertTitle>API Key Valid</AlertTitle>
+              <AlertDescription>
+                Your {serviceName} API key has been validated and saved
+              </AlertDescription>
+            </Alert>
+          )}
+          
+          {validateKeyMutation.isSuccess && !validateKeyMutation.data.success && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>API Key Invalid</AlertTitle>
+              <AlertDescription>
+                {validateKeyMutation.data.message}
+              </AlertDescription>
+            </Alert>
+          )}
+          
+          {validateKeyMutation.isError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Validation Error</AlertTitle>
+              <AlertDescription>
+                {validateKeyMutation.error instanceof Error 
+                  ? validateKeyMutation.error.message 
+                  : "Failed to validate API key"
+                }
+              </AlertDescription>
+            </Alert>
+          )}
+        </form>
       </CardContent>
-      <CardFooter className="flex justify-between flex-wrap text-sm text-gray-600">
-        <p>Your API key is stored securely and never shared.</p>
+      <CardFooter>
+        <Button 
+          type="submit" 
+          onClick={handleSubmit}
+          disabled={validateKeyMutation.isPending || !apiKey.trim()}
+          className="w-full"
+        >
+          {validateKeyMutation.isPending && (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          )}
+          Validate and Save API Key
+        </Button>
       </CardFooter>
     </Card>
   );
