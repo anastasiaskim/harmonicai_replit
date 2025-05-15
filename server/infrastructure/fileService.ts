@@ -7,6 +7,10 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { storage } from '../storage';
 import { storageService, StoredFile } from './storageService';
+import * as EPub from 'epub';
+
+// Import pdf-parse
+import pdfParse from 'pdf-parse';
 
 export interface FileProcessingResult {
   text: string;
@@ -27,15 +31,19 @@ export interface TextExtractionResult {
 class FileService {
   /**
    * Validate file type and size
-   * For Phase 2, we only support .txt files
+   * Support for txt, epub, and pdf files
    */
   validateFile(file: any): boolean {
     if (!file) return false;
     
-    // Check file type (only txt for now)
-    const allowedTypes = ['text/plain'];
+    // Check file type
+    const allowedTypes = [
+      'text/plain',
+      'application/epub+zip',
+      'application/pdf'
+    ];
     if (!allowedTypes.includes(file.mimetype)) {
-      throw new Error('Only .txt files are supported at this time');
+      throw new Error('Only .txt, .epub, and .pdf files are supported');
     }
     
     // Check file size (max 5MB)
@@ -49,40 +57,161 @@ class FileService {
   
   /**
    * Process an uploaded file and extract its content
-   * For Phase 2, we only support .txt files
+   * Supports txt, epub, and pdf files
    */
-  processFile(file: any): FileProcessingResult {
+  async processFile(file: any): Promise<FileProcessingResult> {
     if (!this.validateFile(file)) {
       throw new Error('Invalid file');
     }
     
     try {
-      // Extract text from file (currently only supporting .txt)
-      const text = file.buffer.toString('utf-8');
+      let text = '';
+      let fileType = '';
+      
+      // Process based on file type
+      if (file.mimetype === 'text/plain') {
+        // Handle TXT files
+        text = file.buffer.toString('utf-8');
+        fileType = 'txt';
+      } 
+      else if (file.mimetype === 'application/epub+zip') {
+        // Handle EPUB files
+        text = await this.extractTextFromEpub(file.buffer);
+        fileType = 'epub';
+      } 
+      else if (file.mimetype === 'application/pdf') {
+        // Handle PDF files
+        text = await this.extractTextFromPdf(file.buffer);
+        fileType = 'pdf';
+      }
       
       return {
         text,
-        fileType: 'txt',
+        fileType,
         fileName: file.originalname,
         fileSize: file.size
       };
     } catch (error) {
       console.error('Error processing file:', error);
-      throw new Error('Failed to process file');
+      throw new Error(`Failed to process file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  /**
+   * Extract text from EPUB file
+   */
+  private extractTextFromEpub(buffer: Buffer): Promise<string> {
+    return new Promise((resolve, reject) => {
+      // Write buffer to temp file
+      const tempPath = path.join(process.cwd(), 'uploads', `temp_${Date.now()}.epub`);
+      fs.writeFileSync(tempPath, buffer);
+      
+      const epub = new EPub(tempPath);
+      
+      epub.on('end', () => {
+        let fullText = '';
+        
+        // Get the number of chapters
+        epub.flow.forEach((chapter, index) => {
+          epub.getChapter(chapter.id, (err: Error | null, text: string) => {
+            if (err) {
+              // Log error but continue with other chapters
+              console.error(`Error reading chapter ${index}:`, err);
+            } else {
+              // Strip HTML tags and add chapter text
+              const strippedText = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+              fullText += `\n## Chapter ${index + 1}\n${strippedText}\n`;
+            }
+            
+            // If this is the last chapter, resolve
+            if (index === epub.flow.length - 1) {
+              // Clean up temp file
+              fs.unlinkSync(tempPath);
+              resolve(fullText.trim());
+            }
+          });
+        });
+      });
+      
+      epub.on('error', (err) => {
+        // Clean up temp file
+        if (fs.existsSync(tempPath)) {
+          fs.unlinkSync(tempPath);
+        }
+        reject(err);
+      });
+      
+      epub.parse();
+    });
+  }
+  
+  /**
+   * Extract text from PDF file
+   */
+  private async extractTextFromPdf(buffer: Buffer): Promise<string> {
+    try {
+      // Parse the PDF
+      const data = await pdfParse(buffer);
+      
+      // Basic attempt to identify chapters by page breaks or chapter headings
+      let processedText = data.text || '';
+      
+      // Try to identify chapters by common patterns
+      const chapterPatterns = [
+        /chapter\s+(\d+|[ivxlcdm]+)/gi,
+        /section\s+(\d+|[ivxlcdm]+)/gi,
+        /part\s+(\d+|[ivxlcdm]+)/gi
+      ];
+      
+      // Insert chapter markers if patterns are found
+      for (const pattern of chapterPatterns) {
+        processedText = processedText.replace(
+          pattern, 
+          (match) => `\n## ${match}\n`
+        );
+      }
+      
+      // If no chapters were detected, use page breaks to divide content
+      if (!processedText.includes('\n## ')) {
+        const pages = processedText.split('\n\n');
+        if (pages.length > 1) {
+          processedText = '';
+          let pageCounter = 1;
+          
+          for (const page of pages) {
+            if (page.trim()) {
+              // Every 5 pages becomes a new chapter for better chunking
+              if (pageCounter % 5 === 1) {
+                processedText += `\n## Section ${Math.floor(pageCounter / 5) + 1}\n`;
+              }
+              processedText += page + '\n\n';
+              pageCounter++;
+            }
+          }
+        }
+      }
+      
+      return processedText;
+    } catch (error) {
+      console.error('Error parsing PDF:', error);
+      // Fallback if PDF parsing fails
+      return `## PDF Content\nUnable to extract structured content from PDF. Please try a text file for better results.`;
     }
   }
   
   /**
    * Upload file to storage and extract text
    * This implements the "/upload-ebook" edge function functionality
+   * Now supports txt, epub, and pdf files
    */
   async uploadAndExtractText(file: any): Promise<TextExtractionResult> {
     try {
-      // Process the file to extract text
-      const processedFile = this.processFile(file);
+      // Process the file to extract text - properly handling the async result
+      const processedFile = await this.processFile(file);
       
       // Generate a unique key for storage
-      const contentHash = createHash('md5').update(processedFile.text).digest('hex');
+      const textContent = processedFile.text || '';
+      const contentHash = createHash('md5').update(textContent).digest('hex');
       const fileKey = `uploads/${contentHash}_${file.originalname}`;
       
       // Store the file in the simulated S3 storage
@@ -93,14 +222,15 @@ class FileService {
         file.mimetype
       );
       
-      // Update analytics
-      await this.updateFileAnalytics('txt', processedFile.text.length);
+      // Update analytics with the correct file type
+      const charCount = textContent.length;
+      await this.updateFileAnalytics(processedFile.fileType, charCount);
       
       return {
-        text: processedFile.text,
+        text: textContent,
         fileInfo: storedFile,
-        charCount: processedFile.text.length,
-        fileType: 'txt'
+        charCount,
+        fileType: processedFile.fileType
       };
     } catch (error) {
       console.error('Error in uploadAndExtractText:', error);
