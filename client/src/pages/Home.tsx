@@ -7,7 +7,7 @@ import VoiceSelectionSection from '@/components/VoiceSelectionSection';
 import GenerateSection from '@/components/GenerateSection';
 import TextPreviewSection from '@/components/TextPreviewSection';
 import ChaptersSection from '@/components/ChaptersSection';
-import QuickConversionSection from '@/components/QuickConversionSection';
+
 import ChapterDownloadSection from '@/components/ChapterDownloadSection';
 import ManualChapterSplitSection from '@/components/ManualChapterSplitSection';
 import { useToast } from '@/hooks/use-toast';
@@ -258,12 +258,6 @@ const Home = () => {
               onGenerate={handleGenerateAudiobook}
               isGenerating={isGenerating}
               isDisabled={!text || chapters.length === 0}
-            />
-            
-            <QuickConversionSection
-              selectedVoice={selectedVoice}
-              onVoiceSelect={handleVoiceSelect}
-              voices={(voices as Voice[]) || []}
             />
           </div>
           
