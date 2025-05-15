@@ -59,7 +59,7 @@ const Home = () => {
   });
 
   // Function to handle file uploads and text processing
-  const handleTextProcessed = (
+  const handleTextProcessed = async (
     result: { 
       text: string; 
       chapters: Chapter[]; 
@@ -73,6 +73,17 @@ const Home = () => {
       setChapters(result.chapters);
       setFileMetadata(result.fileMetadata || null);
       setError(null);
+      
+      // Auto-convert the extracted text to speech if we have a valid file
+      if (result.text && result.chapters.length > 0) {
+        toast({
+          title: "Text extracted",
+          description: "Now converting to speech automatically...",
+        });
+        
+        // Trigger the audio generation
+        await handleGenerateAudiobook();
+      }
     } else if (error) {
       setError(error);
       toast({
@@ -90,11 +101,21 @@ const Home = () => {
 
   // Function to generate audiobook
   const handleGenerateAudiobook = async () => {
+    // Check if we have content to convert
     if (!text || chapters.length === 0) {
       toast({
         title: "No content",
         description: "Please upload a file or paste text first.",
         variant: "destructive",
+      });
+      return;
+    }
+
+    // Don't start another conversion if one is already in progress
+    if (isGenerating) {
+      toast({
+        title: "Processing",
+        description: "Conversion is already in progress. Please wait.",
       });
       return;
     }
