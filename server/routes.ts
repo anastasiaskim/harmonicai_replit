@@ -39,10 +39,15 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Serve static files from public directory
+  // Serve static files from public directory for the parser demo
   const publicPath = path.resolve(process.cwd(), 'public');
   if (fs.existsSync(publicPath)) {
-    app.use(express.static(publicPath));
+    // Only serve specific files from public directory
+    app.use('/parser-demo.html', express.static(path.join(publicPath, 'parser-demo.html')));
+    app.use('/js', express.static(path.join(publicPath, 'js')));
+    app.use('/dist', express.static(path.join(publicPath, 'dist')));
+    app.use('/style.css', express.static(path.join(publicPath, 'style.css')));
+    app.use('/input.txt', express.static(path.join(publicPath, 'input.txt')));
   }
   
   // API Endpoints (Presentation Layer for API)
