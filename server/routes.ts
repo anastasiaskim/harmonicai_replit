@@ -353,11 +353,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // API Key management
   app.post("/api/api-keys", async (req: Request, res: Response) => {
     try {
-      const { service, key } = req.body;
-      
       // Validate request using our schema
       try {
-        const validatedData = apiKeySchema.parse({ service, key });
+        const validatedData = apiKeySchema.parse(req.body);
         
         // Use the API key use case to validate and store the key
         const result = await apiKeyUseCase.setApiKey(validatedData.service, validatedData.key);
@@ -369,47 +367,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: readableError.message });
         }
         throw validationError;
-      }
-      
-      if (existingKey) {
-        // Update existing API key
-        const updated = await storage.updateApiKey(existingKey.id, {
-          apiKey,
-          updatedAt: new Date().toISOString(),
-          isActive: true
-        });
-        
-        return res.json({ 
-          success: true, 
-          message: "API key updated successfully",
-          key: {
-            userId: updated?.userId,
-            service: updated?.service,
-            isActive: updated?.isActive,
-            updatedAt: updated?.updatedAt
-          }
-        });
-      } else {
-        // Create new API key
-        const newKey = await storage.insertApiKey({
-          userId,
-          service,
-          apiKey,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          isActive: true
-        });
-        
-        return res.json({ 
-          success: true, 
-          message: "API key created successfully",
-          key: {
-            userId: newKey.userId,
-            service: newKey.service,
-            isActive: newKey.isActive,
-            updatedAt: newKey.updatedAt
-          }
-        });
       }
     } catch (error) {
       console.error("API key management error:", error);
