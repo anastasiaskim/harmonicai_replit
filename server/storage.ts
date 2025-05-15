@@ -1,7 +1,8 @@
 import { 
   voices, type Voice, type InsertVoice,
   analytics, type Analytics, type InsertAnalytics,
-  chapters, type Chapter, type InsertChapter
+  chapters, type Chapter, type InsertChapter,
+  apiKeys, type ApiKey, type InsertApiKey
 } from "@shared/schema";
 
 export interface IStorage {
@@ -20,6 +21,12 @@ export interface IStorage {
   getChapters(): Promise<Chapter[]>;
   insertChapter(chapter: InsertChapter): Promise<Chapter>;
   insertChapters(chapters: InsertChapter[]): Promise<Chapter[]>;
+  
+  // API Key operations
+  getApiKey(id: number): Promise<ApiKey | undefined>;
+  getApiKeyByUserAndService(userId: string, service: string): Promise<ApiKey | undefined>;
+  insertApiKey(apiKey: InsertApiKey): Promise<ApiKey>;
+  updateApiKey(id: number, data: Partial<InsertApiKey>): Promise<ApiKey | undefined>;
 }
 
 export class MemStorage implements IStorage {
