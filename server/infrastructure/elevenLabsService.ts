@@ -6,8 +6,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuid } from 'uuid';
-// Import based on official GitHub examples from elevenlabs-js
-import { ElevenLabs } from 'elevenlabs';
 
 // Get audio directory (create if needed)
 const audioDir = path.join(process.cwd(), 'audio');
@@ -51,42 +49,47 @@ class ElevenLabsService {
       voiceMapping
     };
     
-    this.initClient();
+    // We don't initialize the client in the constructor anymore
+    // Instead, we create a new client for each API call using dynamic imports
   }
   
-  private initClient() {
-    if (this.config.apiKey) {
-      try {
-        // Use require instead of import to avoid TypeScript errors
-        const elevenlabs = require('elevenlabs');
-        this.client = new elevenlabs.ElevenLabs({
-          apiKey: this.config.apiKey,
-        });
-        console.log('ElevenLabs client initialized with API key');
-      } catch (error) {
-        console.error('Error initializing ElevenLabs client:', error);
-      }
-    } else {
+  /**
+   * Helper method to check if the API key is configured
+   */
+  private isApiKeyConfigured(): boolean {
+    const configured = !!this.config.apiKey && this.config.apiKey.length > 0;
+    if (!configured) {
       console.warn('No ElevenLabs API key found. Voice synthesis will not work.');
     }
+    return configured;
   }
   
   /**
    * Check if the API key is valid by making a test request
    */
   async checkApiKeyValidity(): Promise<boolean> {
-    if (!this.client) {
-      console.error('ElevenLabs client not initialized');
+    if (!this.isApiKeyConfigured()) {
       return false;
     }
     
     try {
-      // Make a simple request to check if the API key is valid
-      const voices = await this.client.voices.getAll();
-      console.log('API key validation successful', voices ? 'voices found' : 'no voices found');
-      return !!voices;
-    } catch (error) {
-      console.error('Error checking ElevenLabs API key validity:', error);
+      // Import ElevenLabs SDK dynamically
+      const elevenlabs = await import('elevenlabs');
+      
+      try {
+        // Use the SDK's static methods that accept apiKey parameter
+        const voices = await elevenlabs.voices.getAll({ 
+          apiKey: this.config.apiKey 
+        });
+        
+        console.log('API key validation successful', voices ? 'voices found' : 'no voices found');
+        return Array.isArray(voices) && voices.length > 0;
+      } catch (error) {
+        console.error('Error checking ElevenLabs API key validity:', error);
+        return false;
+      }
+    } catch (importError) {
+      console.error('Error importing ElevenLabs SDK:', importError);
       return false;
     }
   }
@@ -127,8 +130,18 @@ class ElevenLabsService {
       };
       
       try {
+        // Import the ElevenLabs SDK dynamically
+        const elevenlabs = await import('elevenlabs');
+        
+        // Create a new client instance specifically for this request
+        // to avoid issues with the async initialization
+        const client = new elevenlabs.ElevenLabs({
+          apiKey: this.config.apiKey
+        });
+        
         // Generate audio using the SDK
-        const audio = await this.client.generate({
+        console.log('Generating audio with dynamic ElevenLabs client...');
+        const audio = await client.generate({
           voice: elevenLabsVoiceId,
           text: text,
           model_id: "eleven_multilingual_v2",
@@ -166,54 +179,29 @@ class ElevenLabsService {
       } catch (generateError: any) {
         console.error('Error in ElevenLabs generate method:', generateError);
         
-        // Try alternative approach for older SDK versions
-        if (this.client.textToSpeech) {
-          console.log('Trying alternative textToSpeech method...');
-          try {
-            const result = await this.client.textToSpeech.convert(elevenLabsVoiceId, {
-              text,
-              model_id: "eleven_multilingual_v2",
-              voice_settings: voiceSettings
-            });
-            
-            // Create file stream and pipe the audio data
-            const fileStream = fs.createWriteStream(filePath);
-            result.pipe(fileStream);
-            
-            return new Promise((resolve) => {
-              fileStream.on('finish', () => {
-                const stats = fs.statSync(filePath);
-                if (stats.size > 0) {
-                  console.log(`Audio file successfully saved at ${filePath} (${stats.size} bytes)`);
-                  resolve({
-                    success: true,
-                    filePath,
-                  });
-                } else {
-                  console.error('File was created but is empty');
-                  resolve({
-                    success: false,
-                    filePath,
-                    error: 'Audio file is empty, possibly due to API quota limitations'
-                  });
-                }
-              });
-              
-              fileStream.on('error', (err) => {
-                console.error('File stream error:', err);
-                resolve({
-                  success: false,
-                  filePath,
-                  error: `File stream error: ${err.message}`
-                });
-              });
-            });
-          } catch (textToSpeechError) {
-            throw textToSpeechError; // Pass to main error handler
+        // Create a more descriptive error message
+        let detailedError = 'Unknown ElevenLabs SDK error';
+        
+        if (generateError.statusCode) {
+          detailedError = `HTTP Error ${generateError.statusCode}`;
+          
+          // Add specific error handling
+          if (generateError.statusCode === 401) {
+            detailedError = 'Invalid or expired API key (401 Unauthorized)';
+          } else if (generateError.statusCode === 429) {
+            detailedError = 'API rate limit exceeded (429 Too Many Requests)';
           }
-        } else {
-          throw generateError; // Pass to main error handler
+        } else if (generateError.message) {
+          detailedError = generateError.message;
         }
+        
+        console.error('Detailed error:', detailedError);
+        
+        return {
+          success: false,
+          filePath,
+          error: `ElevenLabs API error: ${detailedError}`
+        };
       }
     } catch (error: any) {
       console.error('Error generating audio with ElevenLabs:', error);

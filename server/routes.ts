@@ -351,12 +351,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Force initialize the client with the current key
           // This ensures we're checking with the most recent API key
-          const { ElevenLabs } = require('elevenlabs');
-          
-          // Make a test request to verify the key
           let isValid = false;
           try {
-            const client = new ElevenLabs({
+            // Import dynamically to ensure compatibility with ESM
+            const elevenlabs = await import('elevenlabs');
+            const client = new elevenlabs.ElevenLabs({
               apiKey: apiKey
             });
             
