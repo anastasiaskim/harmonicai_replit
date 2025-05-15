@@ -99,8 +99,8 @@ class AudioService {
       // Create necessary directories
       ensureDirectoryExists(audioDir);
       
-      // Import the ElevenLabs SDK
-      const elevenlabs = require('elevenlabs');
+      // Import the ElevenLabs SDK using dynamic import
+      const elevenlabs = await import('elevenlabs');
       console.log("Loaded ElevenLabs SDK");
       
       // Create client with API key
