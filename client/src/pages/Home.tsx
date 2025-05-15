@@ -118,10 +118,14 @@ const Home = () => {
       } else {
         // If chapters couldn't be automatically detected
         toast({
-          title: "Manual Chapters Needed",
-          description: "We couldn't automatically detect chapters. Please split your text manually.",
+          title: "Processing as Single Chapter",
+          description: "We couldn't detect multiple chapters in your text. Processing as a single chapter.",
           variant: "default",
         });
+        
+        // Set a single chapter with the entire text
+        setChapters([{ title: 'Complete Text', text: originalText }]);
+        setWasChunked(true); // Consider it as "processed" so we can proceed
       }
     } else if (error) {
       setError(error);
