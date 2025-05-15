@@ -182,6 +182,8 @@ export interface ChunkingResult {
   wasChunked: boolean;  // Indicates if actual chapters were detected
   originalText: string; // The original text content
   patternMatchCounts: Record<string, number>; // Statistics on pattern matches
+  aiDetection?: boolean; // Whether AI was used to detect chapters
+  confidenceLevels?: Record<string, number>; // AI confidence level for each chapter
 }
 
 /**
