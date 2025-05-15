@@ -33,6 +33,8 @@ export interface ProcessTextOutput {
   chapters: { title: string; text: string }[];
   charCount: number;
   fileMetadata?: FileMetadata | null;
+  wasChunked: boolean;  // Indicates if chapter detection was successful
+  patternMatchCounts?: Record<string, number>; // Statistics on pattern matches
 }
 
 /**
@@ -85,14 +87,16 @@ export async function processTextUseCase(input: ProcessTextInput): Promise<Proce
       throw new Error("No file or text provided");
     }
     
-    // Detect chapters in the text
-    const chapters = chapterService.detectChapters(result.text);
+    // Detect chapters in the text with detailed information
+    const chunkingResult = chapterService.detectChaptersDetailed(result.text);
     
     return {
       text: result.text,
-      chapters: chapters,
+      chapters: chunkingResult.chapters,
       charCount: result.text.length,
-      fileMetadata: fileMetadata
+      fileMetadata: fileMetadata,
+      wasChunked: chunkingResult.wasChunked,
+      patternMatchCounts: chunkingResult.patternMatchCounts
     };
   } catch (error) {
     console.error("Error in processTextUseCase:", error);

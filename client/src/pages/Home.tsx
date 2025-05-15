@@ -9,6 +9,7 @@ import TextPreviewSection from '@/components/TextPreviewSection';
 import ChaptersSection from '@/components/ChaptersSection';
 import QuickConversionSection from '@/components/QuickConversionSection';
 import ChapterDownloadSection from '@/components/ChapterDownloadSection';
+import ManualChapterSplitSection from '@/components/ManualChapterSplitSection';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 import { extractBookTitle } from '@/lib/chapterDetection';
@@ -53,6 +54,8 @@ const Home = () => {
   const [generatedChapters, setGeneratedChapters] = React.useState<GeneratedChapter[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [bookTitle, setBookTitle] = React.useState<string>('Untitled Book');
+  const [wasChunked, setWasChunked] = React.useState<boolean>(true);
+  const [originalText, setOriginalText] = React.useState<string>('');
 
   const { toast } = useToast();
 
@@ -68,6 +71,8 @@ const Home = () => {
       chapters: Chapter[]; 
       charCount: number;
       fileMetadata?: FileMetadata | null;
+      wasChunked: boolean;
+      patternMatchCounts?: Record<string, number>;
     } | null,
     error?: string
   ) => {
@@ -76,6 +81,8 @@ const Home = () => {
       setChapters(result.chapters);
       setFileMetadata(result.fileMetadata || null);
       setError(null);
+      setWasChunked(result.wasChunked);
+      setOriginalText(result.text);
       
       // Try to extract a book title from the text
       const detectedTitle = extractBookTitle(result.text);
@@ -83,22 +90,36 @@ const Home = () => {
       
       console.log(`Extracted book title: "${detectedTitle}"`);
       console.log(`Detected ${result.chapters.length} chapters in the text`);
+      console.log(`Was chunking successful? ${result.wasChunked ? 'Yes' : 'No'}`);
+      
+      if (result.patternMatchCounts) {
+        console.log('Pattern match counts:', result.patternMatchCounts);
+      }
       
       // Show success message about extracted chapters
-      toast({
-        title: "Text Processing Complete",
-        description: `Extracted ${result.chapters.length} chapters from "${detectedTitle}"`,
-      });
-      
-      // Auto-convert the extracted text to speech if we have a valid file
-      if (result.text && result.chapters.length > 0) {
+      if (result.wasChunked) {
         toast({
-          title: "Starting Audio Conversion",
-          description: "Now converting text to speech automatically...",
+          title: "Text Processing Complete",
+          description: `Extracted ${result.chapters.length} chapters from "${detectedTitle}"`,
         });
         
-        // Trigger the audio generation
-        await handleGenerateAudiobook();
+        // Auto-convert the extracted text to speech if we have a valid file
+        if (result.text && result.chapters.length > 0) {
+          toast({
+            title: "Starting Audio Conversion",
+            description: "Now converting text to speech automatically...",
+          });
+          
+          // Trigger the audio generation
+          await handleGenerateAudiobook();
+        }
+      } else {
+        // If chapters couldn't be automatically detected
+        toast({
+          title: "Manual Chapters Needed",
+          description: "We couldn't automatically detect chapters. Please split your text manually.",
+          variant: "default",
+        });
       }
     } else if (error) {
       setError(error);
@@ -113,6 +134,17 @@ const Home = () => {
   // Function to handle voice selection
   const handleVoiceSelect = (voiceId: string) => {
     setSelectedVoice(voiceId);
+  };
+  
+  // Function to handle manual chapter splitting
+  const handleManualSplit = (manualChapters: Chapter[]) => {
+    setChapters(manualChapters);
+    setWasChunked(true); // Now we consider the manual split as a successful chunking
+    
+    toast({
+      title: "Manual Split Complete",
+      description: `Created ${manualChapters.length} chapters manually.`,
+    });
   };
 
   // Function to generate audiobook
@@ -242,8 +274,16 @@ const Home = () => {
               error={error}
             />
             
-            {/* Show chapter download section when chapters are available */}
-            {chapters.length > 0 && (
+            {/* Show manual chapter split section when automatic chunking failed */}
+            {text && !wasChunked && (
+              <ManualChapterSplitSection
+                originalText={originalText}
+                onSplitComplete={handleManualSplit}
+              />
+            )}
+            
+            {/* Show chapter download section when chapters are available and chunking was successful */}
+            {chapters.length > 0 && wasChunked && (
               <ChapterDownloadSection
                 chapters={chapters}
                 bookTitle={bookTitle}
