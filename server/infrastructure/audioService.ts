@@ -11,17 +11,21 @@ import { fileService } from './fileService';
 import { ChapterDTO } from './chapterService';
 import { InsertChapter } from '@shared/schema';
 
+// Helper function to ensure a directory exists
+function ensureDirectoryExists(dirPath: string) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+    console.log(`Created directory: ${dirPath}`);
+  }
+}
+
 // Ensure uploads directory exists
 const uploadDir = path.resolve(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+ensureDirectoryExists(uploadDir);
 
 // Ensure audio directory exists
 const audioDir = path.resolve(process.cwd(), 'audio');
-if (!fs.existsSync(audioDir)) {
-  fs.mkdirSync(audioDir, { recursive: true });
-}
+ensureDirectoryExists(audioDir);
 
 export interface ElevenLabsConfig {
   apiKey: string;
@@ -89,9 +93,17 @@ class AudioService {
     // Make API call to ElevenLabs
     try {
       console.log(`Calling ElevenLabs API for voice ${voiceId} (${elevenLabsVoiceId})`);
+      console.log(`API key exists and length: ${this.elevenLabsConfig.apiKey ? this.elevenLabsConfig.apiKey.substring(0, 4) + '...' : 'Missing'}`);
+      console.log(`Text length: ${text.length} characters`);
+      
+      // Create necessary directories
+      ensureDirectoryExists(audioDir);
+      
+      const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
+      console.log(`Sending request to: ${url}`);
       
       const response = await axios.post(
-        `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`,
+        url,
         {
           text,
           model_id: "eleven_monolingual_v1",
@@ -110,8 +122,12 @@ class AudioService {
         }
       );
       
+      console.log(`ElevenLabs API response status: ${response.status}`);
+      console.log(`Response data length: ${response.data?.length || 0} bytes`);
+      
       // Save the audio file
       fs.writeFileSync(filePath, Buffer.from(response.data));
+      console.log(`Audio file saved to: ${filePath}`);
       
       // Update analytics
       await this.updateVoiceAnalytics(voiceId);
@@ -119,6 +135,26 @@ class AudioService {
       return `/audio/${fileName}`;
     } catch (error: any) {
       console.error('Error calling ElevenLabs API:', error?.response?.status, error?.response?.statusText || error);
+      console.error('Error message:', error.message);
+      
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response headers:', JSON.stringify(error.response.headers));
+        
+        // If the response contains text data, log it
+        if (error.response.data) {
+          try {
+            if (error.response.data instanceof Buffer) {
+              const textData = error.response.data.toString('utf8');
+              console.error('Response data (buffer):', textData.substring(0, 200));
+            } else {
+              console.error('Response data:', error.response.data);
+            }
+          } catch (e) {
+            console.error('Could not parse error response data');
+          }
+        }
+      }
       
       // If in development mode, create a mock audio file for testing
       if (process.env.NODE_ENV === 'development') {

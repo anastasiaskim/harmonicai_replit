@@ -144,40 +144,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Edge Function: Convert text directly to audio
   app.post("/api/convert-to-audio", async (req: Request, res: Response) => {
     try {
+      console.log("Received convert-to-audio request");
       const { text, voiceId, title } = req.body;
       
       // Validate request
       if (!text || typeof text !== 'string') {
+        console.log("Invalid request: Missing or invalid text");
         return res.status(400).json({ error: "Text is required and must be a string" });
       }
       
       if (!voiceId || typeof voiceId !== 'string') {
+        console.log("Invalid request: Missing or invalid voiceId");
         return res.status(400).json({ error: "VoiceId is required and must be a string" });
       }
       
       if (!title || typeof title !== 'string') {
+        console.log("Invalid request: Missing or invalid title");
         return res.status(400).json({ error: "Title is required and must be a string" });
       }
       
+      console.log(`Processing conversion request: title="${title}", voice="${voiceId}", text length=${text.length}`);
+      
       // Check if text is not too long (ElevenLabs has a 5000 character limit per request)
       if (text.length > 5000) {
+        console.log(`Text too long: ${text.length} characters (max 5000)`);
         return res.status(400).json({ 
           error: "Text is too long, maximum 5000 characters allowed per request" 
         });
       }
       
       // Generate audio with ElevenLabs API
+      console.log("Calling ElevenLabs API...");
       const audioUrl = await audioService.convertTextToSpeech({
         text,
         voiceId,
         title
       });
+      console.log(`Audio generation successful, URL: ${audioUrl}`);
       
       // Get file path and check if it exists
       const fileName = path.basename(audioUrl);
       const { exists, filePath } = audioService.getAudioFilePath(fileName);
+      console.log(`Audio file path: ${filePath}, exists: ${exists}`);
       
       if (!exists) {
+        console.log("Error: Generated audio file does not exist");
         return res.status(500).json({ error: "Failed to generate audio file" });
       }
       
@@ -187,19 +198,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Estimate audio duration (1.5KB per second at 128kbps)
       const estimatedDurationInSeconds = Math.ceil(fileSizeInBytes / 1500);
+      console.log(`File size: ${fileSizeInBytes} bytes, estimated duration: ${estimatedDurationInSeconds} seconds`);
       
       // Return audio URL and metadata
-      res.json({
+      const response = {
         success: true,
         audioUrl,
         fileName,
         fileSize: fileSizeInBytes,
         duration: estimatedDurationInSeconds,
         mimeType: 'audio/mpeg'
-      });
+      };
+      
+      console.log("Sending successful response:", response);
+      res.json(response);
     } catch (error) {
       console.error("Convert-to-audio error:", error);
       if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
         return res.status(500).json({ error: error.message });
       }
       return res.status(500).json({ error: "Failed to convert text to audio" });
