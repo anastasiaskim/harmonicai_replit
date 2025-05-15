@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Text Section Parser</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="../dist/parser.js" defer></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Text Section Parser</h1>
+      <p>Upload a text file to parse sections marked with "## Section X"</p>
+    </header>
+    
+    <main>
+      <section class="upload-section">
+        <h2>Upload Text File</h2>
+        <div class="file-upload">
+          <label for="fileInput" class="file-upload-label">
+            Choose File
+            <input type="file" id="fileInput" accept=".txt" />
+          </label>
+          <div class="file-info">No file selected</div>
+        </div>
+      </section>
+      
+      <section class="output-section">
+        <h2>Parsed Sections</h2>
+        <div id="output" class="output-container">
+          <div class="placeholder">
+            Upload a text file to see the parsed sections
+          </div>
+        </div>
+      </section>
+    </main>
+    
+    <footer>
+      <p>Text Parser - Iteration 1</p>
+    </footer>
+  </div>
+  
+  <script>
+    // Update file info when a file is selected
+    document.getElementById('fileInput').addEventListener('change', function(event) {
+      const fileInfo = document.querySelector('.file-info');
+      if (event.target.files && event.target.files.length > 0) {
+        const file = event.target.files[0];
+        fileInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+      } else {
+        fileInfo.textContent = 'No file selected';
+      }
+    });
+  </script>
+</body>
+</html>

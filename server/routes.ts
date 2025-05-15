@@ -8,7 +8,7 @@ import { fromZodError } from "zod-validation-error";
 import JSZip from "jszip";
 
 // Import domain layer
-import { textToSpeechSchema } from "@shared/schema";
+import { textToSpeechSchema } from "../shared/schema";
 
 // Import application layer
 import { 

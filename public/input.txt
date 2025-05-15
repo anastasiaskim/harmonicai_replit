@@ -1,0 +1,46 @@
+# Sample Text File with Sections
+
+This is the introduction text that appears before any sections.
+It might contain multiple paragraphs or lines of text.
+
+## Section 1
+
+This is the content of section 1.
+It contains several lines of text.
+
+Some of these lines might be separated by blank lines,
+which should be preserved in the output.
+
+## Section 2
+
+The content of section 2 starts here.
+This section demonstrates the parser's ability to:
+- Recognize section headers
+- Group content correctly
+- Handle different types of formatting
+
+## Section 3
+
+This is section 3, which is the final section of our sample text.
+The parser should correctly identify this as the third section.
+
+It should also properly include all of this text as part of section 3,
+even though there are blank lines in between.
+
+## Section 4
+
+This section includes a code sample:
+
+```
+function example() {
+  console.log("This is a code block");
+  return true;
+}
+```
+
+The parser should preserve the formatting of this code block.
+
+## Section 5
+
+This is the final section of our sample document.
+When displayed in the browser, this text should appear under the "Section 5" heading.
