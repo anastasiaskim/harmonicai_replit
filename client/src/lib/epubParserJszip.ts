@@ -10,8 +10,10 @@ export interface EpubChapter {
   href: string;
   title: string;
   level: number;
-  text?: string;
+  text?: string;      // Plain text content
+  htmlContent?: string; // Original HTML content
   index: number;
+  source: 'ncx' | 'heading' | 'spine'; // Indicates where this chapter was extracted from
 }
 
 export interface EpubParseResult {
@@ -130,7 +132,8 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
               href,
               title,
               level: navLevel - 1, // Normalize to 0-based level
-              index: index++
+              index: index++,
+              source: 'ncx'
             });
           }
         });
@@ -169,7 +172,8 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
             href: item.href,
             title: `Chapter ${index + 1}`,
             level: 0,
-            index: index++
+            index: index++,
+            source: 'spine'
           });
         }
       }
