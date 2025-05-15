@@ -9,7 +9,7 @@ import TextPreviewSection from '@/components/TextPreviewSection';
 import ChaptersSection from '@/components/ChaptersSection';
 
 import ChapterDownloadSection from '@/components/ChapterDownloadSection';
-import ManualChapterSplitSection from '@/components/ManualChapterSplitSection';
+
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 import { extractBookTitle } from '@/lib/chapterDetection';
@@ -138,16 +138,7 @@ const Home = () => {
     setSelectedVoice(voiceId);
   };
   
-  // Function to handle manual chapter splitting
-  const handleManualSplit = (manualChapters: Chapter[]) => {
-    setChapters(manualChapters);
-    setWasChunked(true); // Now we consider the manual split as a successful chunking
-    
-    toast({
-      title: "Manual Split Complete",
-      description: `Created ${manualChapters.length} chapters manually.`,
-    });
-  };
+
 
   // Function to generate audiobook
   const handleGenerateAudiobook = async () => {
@@ -270,15 +261,7 @@ const Home = () => {
               error={error}
               wasChunked={wasChunked}
             />
-            
-            {/* Show manual chapter split section when automatic chunking failed but only if we have text */}
-            {text && !wasChunked && (
-              <ManualChapterSplitSection
-                originalText={originalText}
-                onSplitComplete={handleManualSplit}
-                showDetectionFailedAlert={true}
-              />
-            )}
+
             
             {/* Show chapter download section when chapters are available and chunking was successful */}
             {chapters.length > 0 && wasChunked && (
