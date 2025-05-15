@@ -63,9 +63,72 @@ class AudioService {
       james: "pNInz6obpgDQGcFmaJgB"
     }
   };
+  
+  /**
+   * Split text into smaller chunks to stay within API limits
+   * @param text The text to split
+   * @param maxChunkSize Maximum characters per chunk (default: 4000)
+   * @returns Array of text chunks
+   */
+  private splitTextIntoChunks(text: string, maxChunkSize: number = 4000): string[] {
+    // If text is already within the limit, return it as is
+    if (text.length <= maxChunkSize) {
+      return [text];
+    }
+    
+    console.log(`Splitting text of length ${text.length} into chunks of max ${maxChunkSize} characters`);
+    
+    const chunks: string[] = [];
+    let currentChunk = "";
+    
+    // Split by sentences to preserve natural speech patterns
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    
+    for (const sentence of sentences) {
+      // If adding this sentence would exceed the limit, start a new chunk
+      if (currentChunk.length + sentence.length > maxChunkSize) {
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk.trim());
+          currentChunk = "";
+        }
+        
+        // Handle sentences that are longer than the max chunk size
+        if (sentence.length > maxChunkSize) {
+          // Split long sentences by words
+          const words = sentence.split(/\s+/);
+          let wordChunk = "";
+          
+          for (const word of words) {
+            if (wordChunk.length + word.length + 1 > maxChunkSize) {
+              chunks.push(wordChunk.trim());
+              wordChunk = word;
+            } else {
+              wordChunk += (wordChunk ? " " : "") + word;
+            }
+          }
+          
+          if (wordChunk.length > 0) {
+            currentChunk = wordChunk;
+          }
+        } else {
+          currentChunk = sentence;
+        }
+      } else {
+        currentChunk += (currentChunk ? " " : "") + sentence;
+      }
+    }
+    
+    // Add the last chunk if there's anything left
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+    }
+    
+    console.log(`Split text into ${chunks.length} chunks`);
+    return chunks;
+  }
 
   /**
-   * Convert text to speech using ElevenLabs API with SDK
+   * Convert text to speech using ElevenLabs API with chunking for large texts
    */
   async convertTextToSpeech(request: TextToSpeechRequest): Promise<string> {
     if (!this.elevenLabsConfig.apiKey) {
@@ -90,7 +153,7 @@ class AudioService {
       return `/audio/${fileName}`;
     }
     
-    // Make API call to ElevenLabs using SDK
+    // Make API call to ElevenLabs
     try {
       console.log(`Calling ElevenLabs API for voice ${voiceId} (${elevenLabsVoiceId})`);
       console.log(`API key exists and length: ${this.elevenLabsConfig.apiKey ? this.elevenLabsConfig.apiKey.substring(0, 4) + '...' : 'Missing'}`);
@@ -99,43 +162,103 @@ class AudioService {
       // Create necessary directories
       ensureDirectoryExists(audioDir);
       
-      // Rather than using the SDK, we'll use a direct API call with axios
-      console.log(`Making direct API call to ElevenLabs API for voice ${elevenLabsVoiceId}`);
+      // Split text into manageable chunks if it's too long (ElevenLabs limit is 5000 chars)
+      const textChunks = this.splitTextIntoChunks(text, 4800); // 4800 for safety margin
       
-      const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
-      console.log(`Sending request to: ${url}`);
-      
-      const response = await axios.post(
-        url,
-        {
-          text,
-          model_id: "eleven_multilingual_v2", // Using the latest model
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.5
-          }
-        },
-        {
-          headers: {
-            'Accept': 'audio/mpeg',
-            'xi-api-key': this.elevenLabsConfig.apiKey,
-            'Content-Type': 'application/json'
-          },
-          responseType: 'arraybuffer'
+      // Process differently based on number of chunks
+      if (textChunks.length > 1) {
+        console.log(`Text was split into ${textChunks.length} chunks for processing`);
+        
+        // Create an array of temporary files for each chunk
+        const tempFilePaths: string[] = [];
+        
+        // Process each chunk separately
+        for (let i = 0; i < textChunks.length; i++) {
+          const chunk = textChunks[i];
+          console.log(`Processing chunk ${i+1}/${textChunks.length} (${chunk.length} characters)`);
+          
+          // Create a temporary filename for this chunk
+          const tempFileName = `${safeTitle}_chunk${i+1}_${contentHash.substring(0, 8)}.mp3`;
+          const tempFilePath = path.join(audioDir, tempFileName);
+          tempFilePaths.push(tempFilePath);
+          
+          // Call ElevenLabs API for this chunk
+          const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
+          const response = await axios.post(
+            url,
+            {
+              text: chunk,
+              model_id: "eleven_multilingual_v2",
+              voice_settings: {
+                stability: 0.5,
+                similarity_boost: 0.5
+              }
+            },
+            {
+              headers: {
+                'Accept': 'audio/mpeg',
+                'xi-api-key': this.elevenLabsConfig.apiKey,
+                'Content-Type': 'application/json'
+              },
+              responseType: 'arraybuffer'
+            }
+          );
+          
+          // Save this chunk's audio
+          fs.writeFileSync(tempFilePath, Buffer.from(response.data));
+          console.log(`Chunk ${i+1} audio saved to: ${tempFilePath}`);
         }
-      );
-      
-      console.log(`ElevenLabs API response status: ${response.status}`);
-      console.log(`Response data length: ${response.data?.length || 0} bytes`);
-      
-      // Save the audio file
-      const audioResponse = response.data;
-      
-      console.log(`Received audio response, type: ${typeof audioResponse}`);
-      
-      // Save the audio file (audioResponse is an ArrayBuffer)
-      fs.writeFileSync(filePath, Buffer.from(audioResponse));
-      console.log(`Audio file saved to: ${filePath}`);
+        
+        // Merge all chunks into the final audio file
+        console.log(`Merging ${tempFilePaths.length} audio chunks into final file`);
+        
+        // Simple merge: concatenate binary data
+        const finalFile = fs.createWriteStream(filePath);
+        for (const tempPath of tempFilePaths) {
+          // Read and append each chunk to the final file
+          const chunkData = fs.readFileSync(tempPath);
+          finalFile.write(chunkData);
+          
+          // Delete the temporary chunk file
+          fs.unlinkSync(tempPath);
+        }
+        finalFile.end();
+        
+        console.log(`Successfully merged audio chunks into: ${filePath}`);
+      } else {
+        // For single chunks, process normally
+        console.log(`Text is within limits, processing as single chunk`);
+        
+        const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
+        console.log(`Sending request to: ${url}`);
+        
+        const response = await axios.post(
+          url,
+          {
+            text,
+            model_id: "eleven_multilingual_v2", // Using the latest model
+            voice_settings: {
+              stability: 0.5,
+              similarity_boost: 0.5
+            }
+          },
+          {
+            headers: {
+              'Accept': 'audio/mpeg',
+              'xi-api-key': this.elevenLabsConfig.apiKey,
+              'Content-Type': 'application/json'
+            },
+            responseType: 'arraybuffer'
+          }
+        );
+        
+        console.log(`ElevenLabs API response status: ${response.status}`);
+        console.log(`Response data length: ${response.data?.length || 0} bytes`);
+        
+        // Save the audio file (response.data is an ArrayBuffer)
+        fs.writeFileSync(filePath, Buffer.from(response.data));
+        console.log(`Audio file saved to: ${filePath}`);
+      }
       
       // Update analytics
       await this.updateVoiceAnalytics(voiceId);
@@ -170,9 +293,9 @@ class AudioService {
       console.log(`Generating audio for chapter "${chapter.title}" using voice "${voiceId}"`);
       console.log(`Chapter text length: ${chapter.text.length} characters`);
       
-      // Convert chapter text to audio
+      // Convert chapter text to audio - our improved convertTextToSpeech now handles chunking
       const audioUrl = await this.convertTextToSpeech({
-        text: chapter.text.substring(0, 5000), // Limit to 5000 chars for ElevenLabs API
+        text: chapter.text, // No longer need to limit characters, the chunking handles long texts
         voiceId,
         title: chapter.title
       });
