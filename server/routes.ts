@@ -9,19 +9,20 @@ import JSZip from "jszip";
 
 // Import domain layer
 import { textToSpeechSchema } from "@shared/schema";
-import { storage } from "./storage";
-
-// Import schemas from use cases
-import { apiKeySchema, chapterDetectionSchema } from "./application/useCases";
 
 // Import application layer
 import { 
-  apiKeyUseCase,
-  chapterDetectionUseCase
+  getVoicesUseCase, 
+  processTextUseCase, 
+  generateAudiobookUseCase,
+  getAnalyticsUseCase
 } from "./application/useCases";
 
 // Import infrastructure services
+import { fileService } from "./infrastructure/fileService";
 import { chapterService } from "./infrastructure/chapterService";
+import { audioService } from "./infrastructure/audioService";
+import { storageService } from "./infrastructure/storageService";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -43,7 +44,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get available voices
   app.get("/api/voices", async (_req: Request, res: Response) => {
     try {
-      const voices = await storage.getVoices();
+      const voices = await getVoicesUseCase();
       res.json(voices);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch voices" });
@@ -61,27 +62,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "No file provided" });
         }
 
-        // Simple file processing for text extraction
-        const buffer = req.file.buffer;
-        const filename = req.file.originalname;
-        const text = buffer.toString('utf-8');
-        
-        // Store the file with a unique name
-        const uploadPath = path.join(uploadDir, `${Date.now()}-${filename}`);
-        fs.writeFileSync(uploadPath, buffer);
-        
-        // Return the extracted text and file metadata
-        const result = {
-          text,
-          fileMetadata: {
-            key: uploadPath,
-            name: filename,
-            size: buffer.length,
-            url: `/uploads/${path.basename(uploadPath)}`,
-            mimeType: req.file.mimetype
-          },
-          charCount: text.length
-        };
+        // Process the file using the upload use case
+        const result = await processTextUseCase({
+          file: req.file
+        });
 
         return res.json(result);
       } catch (error) {
@@ -105,37 +89,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Process the input (file or direct text)
-        let text = '';
-        let fileMetadata = null;
-        
-        // Process file if provided
-        if (req.file) {
-          const buffer = req.file.buffer;
-          const filename = req.file.originalname;
-          text = buffer.toString('utf-8');
-          
-          // Store the file with a unique name
-          const uploadPath = path.join(uploadDir, `${Date.now()}-${filename}`);
-          fs.writeFileSync(uploadPath, buffer);
-          
-          fileMetadata = {
-            key: uploadPath,
-            name: filename,
-            size: buffer.length,
-            url: `/uploads/${path.basename(uploadPath)}`,
-            mimeType: req.file.mimetype
-          };
-        } else if (req.body.text) {
-          // Use direct text input
-          text = req.body.text;
-        }
-        
-        // Return the result
-        const result = {
-          text,
-          fileMetadata,
-          charCount: text.length
-        };
+        const result = await processTextUseCase({
+          file: req.file, 
+          directText: req.body.text
+        });
 
         return res.json(result);
       } catch (error) {
@@ -318,113 +275,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  // AI-powered chapter detection
-  app.post("/api/detect-chapters", async (req: Request, res: Response) => {
-    try {
-      console.log("Received AI chapter detection request");
-      
-      // Ensure we have a request body
-      if (!req.body || typeof req.body !== 'object') {
-        return res.status(400).json({ 
-          error: "Invalid request body", 
-          chapters: [{ title: "Chapter 1", text: "" }],
-          wasChunked: false,
-          aiDetection: false
-        });
-      }
-      
-      const { text, useAI = true } = req.body;
-      
-      // Additional validation for text
-      if (!text || typeof text !== 'string' || text.trim().length === 0) {
-        return res.status(400).json({ 
-          error: "Text content is required", 
-          chapters: [{ title: "Chapter 1", text: "" }],
-          wasChunked: false,
-          aiDetection: false
-        });
-      }
-      
-      // Validate request using our schema
-      try {
-        const validatedData = chapterDetectionSchema.parse({ 
-          text: text.trim(), 
-          useAI 
-        });
-        
-        // Use the AI-powered chapter detection use case
-        console.log("Calling AI-powered chapter detection use case");
-        const result = await chapterDetectionUseCase.detectChapters(validatedData.text, validatedData.useAI);
-        console.log(`Detection result: ${result.chapters.length} chapters detected, wasChunked=${result.wasChunked}, usedAI=${result.aiDetection}`);
-        
-        return res.json(result);
-      } catch (validationError) {
-        if (validationError instanceof ZodError) {
-          const readableError = fromZodError(validationError);
-          return res.status(400).json({ error: readableError.message });
-        }
-        throw validationError;
-      }
-    } catch (error) {
-      console.error("AI chapter detection error:", error);
-      if (error instanceof Error) {
-        return res.status(500).json({ error: error.message });
-      }
-      return res.status(500).json({ error: "Failed to detect chapters with AI" });
-    }
-  });
-  
-  // API Key management
-  app.post("/api/api-keys", async (req: Request, res: Response) => {
-    try {
-      // Validate request using our schema
-      try {
-        const validatedData = apiKeySchema.parse(req.body);
-        
-        // Use the API key use case to validate and store the key
-        const result = await apiKeyUseCase.setApiKey(validatedData.service, validatedData.key);
-        
-        return res.json(result);
-      } catch (validationError) {
-        if (validationError instanceof ZodError) {
-          const readableError = fromZodError(validationError);
-          return res.status(400).json({ error: readableError.message });
-        }
-        throw validationError;
-      }
-    } catch (error) {
-      console.error("API key management error:", error);
-      if (error instanceof Error) {
-        return res.status(500).json({ error: error.message });
-      }
-      return res.status(500).json({ error: "Failed to manage API key" });
-    }
-  });
-
   // Server-side chapter ZIP creation and download
   app.post("/api/download", async (req: Request, res: Response) => {
     try {
       console.log("Received chapter download request");
-      const { text, bookTitle = "Untitled Book", userId = "default" } = req.body;
+      const { text, bookTitle = "Untitled Book" } = req.body;
       
       // Validate request
       if (!text || typeof text !== 'string') {
         return res.status(400).json({ error: "Text content is required" });
       }
       
-      // Try AI-powered chapter detection first
-      let chunkingResult;
-      try {
-        console.log("Attempting AI-powered chapter detection");
-        chunkingResult = await chapterDetectionUseCase.detectChapters(text, userId);
-        console.log(`AI detection result: ${chunkingResult.chapters.length} chapters, wasChunked=${chunkingResult.wasChunked}, usedAI=${chunkingResult.aiDetection}`);
-      } catch (aiError) {
-        console.error("AI chapter detection failed, falling back to regex detection:", aiError);
-        // Fallback to regex-based chapter detection
-        chunkingResult = chapterService.detectChaptersDetailed(text);
-        console.log(`Fallback detection result: ${chunkingResult.chapters.length} chapters, wasChunked=${chunkingResult.wasChunked}`);
-      }
-      
+      // Detect chapters in the text with detailed information
+      const chunkingResult = chapterService.detectChaptersDetailed(text);
       console.log(`Detected ${chunkingResult.chapters.length} chapters in the text`);
       console.log(`Was chunking successful? ${chunkingResult.wasChunked ? 'Yes' : 'No'}`);
       

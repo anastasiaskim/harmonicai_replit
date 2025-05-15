@@ -1,191 +1,187 @@
-import { useState, useEffect } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/queryClient';
+import React, { useState } from 'react';
+import { Card, CardContent, CardTitle, CardHeader, CardFooter } from '@/components/ui/card';
+import { Eye, BookOpen, AlertCircle, FileText, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Card } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { ChaptersSection } from '@/components/ChaptersSection';
-import { ManualChapterSplitSection } from '@/components/ManualChapterSplitSection';
-import { AIChapterConfidence } from '@/components/AIChapterConfidence';
-import { ApiKeyManagement } from '@/components/ApiKeyManagement';
-import { AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { formatFileSize } from '@/lib/fileHelpers';
 
-interface Chapter {
-  title: string;
-  text: string;
+interface FileMetadata {
+  key: string;
+  name: string;
+  size: number;
+  url: string;
+  mimeType: string;
 }
 
 interface TextPreviewSectionProps {
   text: string;
-  onChaptersSelected: (chapters: Chapter[]) => void;
+  chapters: { title: string; text: string }[];
+  fileMetadata?: FileMetadata | null;
+  error?: string | null;
+  wasChunked?: boolean;
 }
 
-export function TextPreviewSection({ text, onChaptersSelected }: TextPreviewSectionProps) {
-  const [chaptersState, setChaptersState] = useState<{
-    chapters: Chapter[];
-    wasChunked: boolean;
-    aiDetection?: boolean;
-    confidenceLevels?: Record<string, number>;
-  } | null>(null);
+const TextPreviewSection: React.FC<TextPreviewSectionProps> = ({ 
+  text, 
+  chapters, 
+  fileMetadata, 
+  error,
+  wasChunked
+}) => {
+  // State for chapter navigation
+  const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
+  const [copied, setCopied] = useState(false);
   
-  const [error, setError] = useState<string | null>(null);
-  const [showManualSplit, setShowManualSplit] = useState(false);
-
-  // Mutation for AI-powered chapter detection
-  const detectChaptersMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest('/api/detect-chapters', {
-        method: 'POST',
-        body: JSON.stringify({
-          text,
-          useAI: true
-        }),
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      return await response.json();
-    },
-    onSuccess: (data) => {
-      setChaptersState({
-        chapters: data.chapters,
-        wasChunked: data.wasChunked,
-        aiDetection: data.aiDetection,
-        confidenceLevels: data.confidenceLevels
-      });
-      setError(null);
-      setShowManualSplit(false);
-    },
-    onError: (error: any) => {
-      console.error('Error detecting chapters:', error);
-      setError('Failed to detect chapters. Please try manually splitting the text.');
-      setShowManualSplit(true);
-    }
-  });
-
-  // Start chapter detection on component mount
-  useEffect(() => {
+  // Handle copy text to clipboard
+  const copyToClipboard = () => {
     if (text) {
-      detectChaptersMutation.mutate();
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
-  }, [text]);
-
-  // Handle manual chapter creation
-  const handleManualChapters = (chapters: Chapter[]) => {
-    setChaptersState({
-      chapters,
-      wasChunked: chapters.length > 1,
-      aiDetection: false
-    });
-    setShowManualSplit(false);
   };
-
-  // Handle retry of automatic detection
-  const handleRetryDetection = () => {
-    setError(null);
-    detectChaptersMutation.mutate();
+  
+  // Navigate between chapters
+  const nextChapter = () => {
+    if (currentChapterIndex < chapters.length - 1) {
+      setCurrentChapterIndex(currentChapterIndex + 1);
+    }
   };
-
-  // Handle switch to manual mode
-  const handleSwitchToManual = () => {
-    setShowManualSplit(true);
+  
+  const prevChapter = () => {
+    if (currentChapterIndex > 0) {
+      setCurrentChapterIndex(currentChapterIndex - 1);
+    }
   };
-
-  // Determine if we're loading, showing results, or showing manual input
-  const isLoading = detectChaptersMutation.isPending;
-  const hasChapters = chaptersState !== null && chaptersState.chapters.length > 0;
-
+  
+  // Get current chapter (if any)
+  const currentChapter = chapters.length > 0 ? chapters[currentChapterIndex] : null;
+  
+  // Format character count
+  const formatCharCount = (count: number) => {
+    if (count < 1000) return `${count} characters`;
+    return `${(count / 1000).toFixed(1)}k characters`;
+  };
+  
   return (
-    <div className="space-y-8">
-      {/* Loading State */}
-      {isLoading && (
-        <Card className="p-6">
-          <div className="space-y-4">
-            <div className="flex items-center space-x-4">
-              <Skeleton className="h-12 w-12 rounded-full" />
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-[200px]" />
-                <Skeleton className="h-4 w-[150px]" />
-              </div>
+    <Card className="mb-6">
+      <CardHeader className="pb-0">
+        <div className="flex items-center justify-between">
+          <CardTitle className="font-bold text-xl text-gray-800 flex items-center">
+            <Eye className="h-5 w-5 text-primary mr-2" />
+            Extracted Text
+          </CardTitle>
+          
+          {text && !error && (
+            <div className="flex space-x-3 items-center">
+              <Badge variant="outline" className="text-xs">
+                {formatCharCount(text.length)}
+              </Badge>
+              {chapters.length > 0 && (
+                <Badge 
+                  variant={wasChunked === false ? "secondary" : "outline"} 
+                  className={`text-xs ${wasChunked === false ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : ""}`}
+                >
+                  <BookOpen className="h-3 w-3 mr-1" />
+                  {chapters.length} {chapters.length === 1 ? 'chapter' : 'chapters'}
+                  {wasChunked === false && " (auto-detection failed)"}
+                </Badge>
+              )}
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-7 px-2"
+                onClick={copyToClipboard}
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                <span className="ml-1 text-xs">{copied ? 'Copied' : 'Copy'}</span>
+              </Button>
             </div>
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-            <div className="flex justify-between pt-4">
-              <Skeleton className="h-10 w-24" />
-              <Skeleton className="h-10 w-24" />
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* Error State */}
-      {error && !showManualSplit && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-          <div className="flex space-x-4 mt-4">
-            <Button onClick={handleRetryDetection} variant="outline" size="sm">
-              Retry Automatic Detection
-            </Button>
-            <Button onClick={handleSwitchToManual} size="sm">
-              Split Manually
-            </Button>
-          </div>
-        </Alert>
-      )}
-
-      {/* Manual Split Section */}
-      {showManualSplit && (
-        <ManualChapterSplitSection
-          text={text}
-          onChaptersCreated={handleManualChapters}
-        />
-      )}
-
-      {/* Success State with Chapter Selection */}
-      {!isLoading && !showManualSplit && hasChapters && (
-        <div className="space-y-6">
-          {chaptersState && !chaptersState.wasChunked && (
-            <Alert className="mb-4 bg-yellow-50 border-yellow-200">
-              <AlertCircle className="h-4 w-4 text-yellow-600" />
-              <AlertTitle className="text-yellow-800">Chapter Detection Notice</AlertTitle>
-              <AlertDescription className="text-yellow-700">
-                We couldn't automatically detect multiple chapters in your text. If you want to split it into chapters manually, 
-                click the button below.
-              </AlertDescription>
-              <div className="mt-4">
-                <Button onClick={handleSwitchToManual} variant="outline" size="sm">
-                  Split Manually
-                </Button>
-              </div>
-            </Alert>
-          )}
-
-          {chaptersState && chaptersState.wasChunked && (
-            <Alert className="mb-4 bg-green-50 border-green-200">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
-              <AlertTitle className="text-green-800">Chapters Detected</AlertTitle>
-              <AlertDescription className="text-green-700">
-                We successfully detected {chaptersState.chapters.length} chapters in your text
-                {chaptersState.aiDetection ? " using AI technology" : ""}.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {chaptersState && (
-            <ChaptersSection
-              chapters={chaptersState.chapters}
-              wasChunked={chaptersState.wasChunked}
-              aiDetection={chaptersState.aiDetection}
-              confidenceLevels={chaptersState.confidenceLevels}
-              onSelectChapters={onChaptersSelected}
-            />
           )}
         </div>
-      )}
-    </div>
+      </CardHeader>
+      
+      <CardContent className="p-6">
+        {/* Error Alert */}
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        
+        {/* File metadata if available */}
+        {fileMetadata && !error && (
+          <div className="bg-gray-50 rounded-lg p-3 mb-4 border border-gray-200">
+            <div className="flex items-center">
+              <FileText className="h-5 w-5 text-primary mr-2" />
+              <div>
+                <h4 className="text-sm font-medium">{fileMetadata.name}</h4>
+                <p className="text-xs text-gray-500">{formatFileSize(fileMetadata.size)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Text Preview Area */}
+        {text && !error ? (
+          <div>
+            {chapters.length > 0 ? (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium text-gray-800">
+                    {currentChapter?.title || 'Chapter Preview'}
+                  </h3>
+                  {chapters.length > 1 && (
+                    <div className="flex items-center space-x-1">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        disabled={currentChapterIndex === 0}
+                        onClick={prevChapter}
+                        className="h-8 w-8 p-0"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-xs text-gray-500">
+                        {currentChapterIndex + 1} / {chapters.length}
+                      </span>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        disabled={currentChapterIndex === chapters.length - 1}
+                        onClick={nextChapter}
+                        className="h-8 w-8 p-0"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                
+                <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
+                  <div className="whitespace-pre-line">{currentChapter?.text}</div>
+                </ScrollArea>
+              </div>
+            ) : (
+              <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
+                <p className="whitespace-pre-line">{text}</p>
+              </ScrollArea>
+            )}
+          </div>
+        ) : !error ? (
+          <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
+            <p className="text-gray-400 text-center my-12">
+              Upload a text file to extract and preview content
+            </p>
+          </ScrollArea>
+        ) : null}
+      </CardContent>
+    </Card>
   );
-}
+};
+
+export default TextPreviewSection;

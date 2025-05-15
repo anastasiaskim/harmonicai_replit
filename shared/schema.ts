@@ -19,21 +19,7 @@ export const analytics = pgTable("analytics", {
   characterCount: integer("character_count").default(0),
   fileTypes: jsonb("file_types").default({}).notNull(),
   voiceUsage: jsonb("voice_usage").default({}).notNull(),
-  aiDetections: integer("ai_detections").default(0),
   createdAt: text("created_at").notNull(),
-});
-
-// User API keys table to store Google AI Studio API keys
-export const apiKeys = pgTable("api_keys", {
-  id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),  // Will use a simple user identifier for now
-  service: text("service").notNull(),  // 'google_ai', 'elevenlabs', etc.
-  apiKey: text("api_key").notNull(),
-  isValid: boolean("is_valid").default(false),
-  isActive: boolean("is_active").default(true),
-  lastValidated: text("last_validated").notNull(),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
 });
 
 // Audiobook chapters
@@ -60,19 +46,7 @@ export const insertAnalyticsSchema = createInsertSchema(analytics).pick({
   characterCount: true,
   fileTypes: true,
   voiceUsage: true,
-  aiDetections: true,
   createdAt: true,
-});
-
-export const insertApiKeySchema = createInsertSchema(apiKeys).pick({
-  userId: true,
-  service: true,
-  apiKey: true,
-  isValid: true,
-  isActive: true,
-  lastValidated: true,
-  createdAt: true,
-  updatedAt: true,
 });
 
 export const insertChapterSchema = createInsertSchema(chapters).pick({
@@ -86,11 +60,9 @@ export const insertChapterSchema = createInsertSchema(chapters).pick({
 // Types
 export type InsertVoice = z.infer<typeof insertVoiceSchema>;
 export type InsertAnalytics = z.infer<typeof insertAnalyticsSchema>;
-export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
 export type InsertChapter = z.infer<typeof insertChapterSchema>;
 export type Voice = typeof voices.$inferSelect;
 export type Analytics = typeof analytics.$inferSelect;
-export type ApiKey = typeof apiKeys.$inferSelect;
 export type Chapter = typeof chapters.$inferSelect;
 
 // Request validation schemas

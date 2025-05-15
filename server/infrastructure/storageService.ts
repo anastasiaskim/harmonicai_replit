@@ -1,75 +1,161 @@
 /**
  * Infrastructure Layer: Storage Service
- * Handles file storage and retrieval
+ * Simulates S3-like storage functionality for files
  */
-
 import * as fs from 'fs';
 import * as path from 'path';
-import { storage } from '../storage';
 
-export class StorageService {
+export interface StoredFile {
+  key: string;         // Unique identifier for the file (S3 key)
+  fileName: string;    // Original file name
+  filePath: string;    // Local file path
+  fileUrl: string;     // URL to access the file
+  mimeType: string;    // File MIME type
+  size: number;        // File size in bytes
+  createdAt: string;   // ISO timestamp of when the file was created
+}
+
+class StorageService {
   /**
-   * Serve a file from storage
-   * 
-   * @param key The storage key for the file
-   * @returns Object with file info and buffer, or null if file not found
+   * Store a file in the storage system
+   * In production, this would upload to S3 or similar cloud storage
    */
-  serveFile(key: string): { 
-    file: { 
-      fileName: string; 
-      mimeType: string; 
-      size: number 
-    }; 
-    buffer: Buffer 
-  } | null {
+  async storeFile(
+    fileBuffer: Buffer, 
+    key: string, 
+    originalFileName: string, 
+    mimeType: string
+  ): Promise<StoredFile> {
     try {
-      // Parse the key to get the directory and filename
-      const parts = key.split('/');
-      const dir = parts[0];
-      const fileName = parts[1];
+      // Get the directory from the key
+      const directory = path.dirname(key);
+      const localDirectory = path.join(process.cwd(), directory);
       
-      if (!dir || !fileName) {
-        console.error(`Invalid storage key: ${key}`);
-        return null;
+      // Ensure the directory exists
+      if (!fs.existsSync(localDirectory)) {
+        fs.mkdirSync(localDirectory, { recursive: true });
       }
       
-      // Build the filepath
-      const filePath = path.join(process.cwd(), dir, fileName);
+      // Define the full path
+      const filePath = path.join(process.cwd(), key);
       
-      // Check if the file exists
-      if (!fs.existsSync(filePath)) {
-        console.error(`File not found: ${filePath}`);
-        return null;
-      }
+      // Write the file
+      fs.writeFileSync(filePath, fileBuffer);
       
-      // Read the file
-      const buffer = fs.readFileSync(filePath);
-      
-      // Determine MIME type (simplified for MVP)
-      let mimeType = 'application/octet-stream';
-      if (fileName.endsWith('.mp3')) {
-        mimeType = 'audio/mpeg';
-      } else if (fileName.endsWith('.txt')) {
-        mimeType = 'text/plain';
-      } else if (fileName.endsWith('.json')) {
-        mimeType = 'application/json';
-      }
-      
-      // Get file stats
+      // Get file size
       const stats = fs.statSync(filePath);
       
-      return {
-        file: {
-          fileName,
-          mimeType,
-          size: stats.size
-        },
-        buffer
+      // Create the URL for the file
+      // In a real implementation, this would be a CDN or S3 URL
+      const fileUrl = `/${key}`;
+      
+      const storedFile: StoredFile = {
+        key,
+        fileName: originalFileName,
+        filePath,
+        fileUrl,
+        mimeType,
+        size: stats.size,
+        createdAt: new Date().toISOString()
       };
+      
+      return storedFile;
     } catch (error) {
-      console.error(`Error serving file ${key}:`, error);
+      console.error('Error storing file:', error);
+      throw new Error('Failed to store file');
+    }
+  }
+
+  /**
+   * Get a file from storage by its key
+   */
+  getFile(key: string): StoredFile | null {
+    try {
+      const filePath = path.join(process.cwd(), key);
+      
+      if (!fs.existsSync(filePath)) {
+        return null;
+      }
+      
+      const stats = fs.statSync(filePath);
+      const fileName = path.basename(key);
+      const mimeType = this.getMimeTypeFromKey(key);
+      
+      const storedFile: StoredFile = {
+        key,
+        fileName,
+        filePath,
+        fileUrl: `/${key}`,
+        mimeType,
+        size: stats.size,
+        createdAt: stats.birthtime.toISOString()
+      };
+      
+      return storedFile;
+    } catch (error) {
+      console.error('Error getting file:', error);
       return null;
     }
+  }
+  
+  /**
+   * Get the contents of a file as a buffer
+   */
+  getFileBuffer(key: string): Buffer | null {
+    try {
+      const filePath = path.join(process.cwd(), key);
+      
+      if (!fs.existsSync(filePath)) {
+        return null;
+      }
+      
+      return fs.readFileSync(filePath);
+    } catch (error) {
+      console.error('Error getting file buffer:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Serve a file from storage
+   */
+  serveFile(key: string): { buffer: Buffer; file: StoredFile } | null {
+    try {
+      const file = this.getFile(key);
+      if (!file) {
+        return null;
+      }
+      
+      const buffer = this.getFileBuffer(key);
+      if (!buffer) {
+        return null;
+      }
+      
+      return { buffer, file };
+    } catch (error) {
+      console.error('Error serving file:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Infer MIME type from file key (extension)
+   */
+  private getMimeTypeFromKey(key: string): string {
+    const extension = path.extname(key).toLowerCase();
+    
+    const mimeTypes: Record<string, string> = {
+      '.txt': 'text/plain',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.mp3': 'audio/mpeg',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png'
+    };
+    
+    return mimeTypes[extension] || 'application/octet-stream';
   }
 }
 

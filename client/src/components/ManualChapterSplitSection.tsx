@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Info, Plus, Trash2 } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
+import { Card } from '@/components/ui/card';
+import { AlertTriangle, Scissors, Save, Plus, Trash2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 interface Chapter {
   title: string;
@@ -13,172 +14,175 @@ interface Chapter {
 }
 
 interface ManualChapterSplitSectionProps {
-  text: string;
-  onChaptersCreated: (chapters: Chapter[]) => void;
+  originalText: string;
+  onSplitComplete: (chapters: Chapter[]) => void;
 }
 
-export function ManualChapterSplitSection({ text, onChaptersCreated }: ManualChapterSplitSectionProps) {
-  // Initial chapter with all text
+const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
+  originalText,
+  onSplitComplete
+}) => {
   const [chapters, setChapters] = useState<Chapter[]>([
-    { title: 'Chapter 1', text: text || '' }
+    { title: 'Chapter 1', text: originalText || '' }
   ]);
-  
-  // Add a new chapter
+  const { toast } = useToast();
+
+  // Add a new chapter at the end
   const addChapter = () => {
-    setChapters([...chapters, { title: `Chapter ${chapters.length + 1}`, text: '' }]);
+    // Split the text of the last chapter in half
+    const lastChapter = chapters[chapters.length - 1];
+    const lastChapterText = lastChapter.text;
+    const splitPoint = Math.floor(lastChapterText.length / 2);
+    
+    // Create two new texts
+    const firstHalf = lastChapterText.substring(0, splitPoint);
+    const secondHalf = lastChapterText.substring(splitPoint);
+    
+    // Update the last chapter and add a new one
+    const updatedChapters = [...chapters];
+    updatedChapters[updatedChapters.length - 1].text = firstHalf;
+    
+    setChapters([
+      ...updatedChapters,
+      { title: `Chapter ${chapters.length + 1}`, text: secondHalf }
+    ]);
   };
-  
+
   // Remove a chapter
   const removeChapter = (index: number) => {
-    // Don't allow removing the last chapter
-    if (chapters.length <= 1) return;
-    
-    // Merge the text with the previous chapter if available
-    const updatedChapters = [...chapters];
-    if (index > 0) {
-      updatedChapters[index - 1].text += ' ' + updatedChapters[index].text;
-    } else if (index === 0 && chapters.length > 1) {
-      // If removing the first chapter, merge with the second
-      updatedChapters[1].text = updatedChapters[0].text + ' ' + updatedChapters[1].text;
+    if (chapters.length <= 1) {
+      toast({
+        title: "Cannot Remove",
+        description: "You must have at least one chapter.",
+        variant: "destructive"
+      });
+      return;
     }
-    
-    // Remove the chapter
-    updatedChapters.splice(index, 1);
-    
-    // Update chapter titles to maintain sequence
-    const renamedChapters = updatedChapters.map((chapter, idx) => ({
-      ...chapter,
-      title: chapter.title.startsWith('Chapter ') ? `Chapter ${idx + 1}` : chapter.title
-    }));
-    
-    setChapters(renamedChapters);
-  };
-  
-  // Update chapter title
-  const updateChapterTitle = (index: number, title: string) => {
-    const updatedChapters = [...chapters];
-    updatedChapters[index].title = title;
+
+    const updatedChapters = chapters.filter((_, i) => i !== index);
     setChapters(updatedChapters);
   };
-  
-  // Update chapter text
-  const updateChapterText = (index: number, text: string) => {
+
+  // Update a chapter title
+  const updateChapterTitle = (index: number, newTitle: string) => {
     const updatedChapters = [...chapters];
-    updatedChapters[index].text = text;
+    updatedChapters[index].title = newTitle;
     setChapters(updatedChapters);
   };
-  
-  // Handle form submission
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Filter out empty chapters
-    const nonEmptyChapters = chapters.filter(chapter => chapter.text.trim() !== '');
-    onChaptersCreated(nonEmptyChapters.length > 0 ? nonEmptyChapters : [{ title: 'Chapter 1', text }]);
+
+  // Update a chapter text
+  const updateChapterText = (index: number, newText: string) => {
+    const updatedChapters = [...chapters];
+    updatedChapters[index].text = newText;
+    setChapters(updatedChapters);
   };
-  
-  // Calculate stats for validation
-  const totalCharacters = chapters.reduce((sum, chapter) => sum + chapter.text.length, 0);
-  const originalCharacters = text.length;
-  const characterDiff = Math.abs(totalCharacters - originalCharacters);
-  const diffPercentage = originalCharacters > 0 ? (characterDiff / originalCharacters) * 100 : 0;
-  
-  // Warning threshold - if more than 5% of characters are missing or added
-  const showWarning = diffPercentage > 5;
-  
+
+  // Save the manual split
+  const saveSplit = () => {
+    if (chapters.some(chapter => !chapter.text.trim())) {
+      toast({
+        title: "Empty Chapter",
+        description: "Some chapters have no content. Please add content or remove empty chapters.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    onSplitComplete(chapters);
+    toast({
+      title: "Chapters Saved",
+      description: `Successfully created ${chapters.length} chapters manually.`
+    });
+  };
+
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Manual Chapter Split</CardTitle>
-          <CardDescription>
-            Split your text into chapters manually by dividing the content below.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {showWarning && (
-            <Alert className="mb-6 bg-amber-50 border-amber-200">
-              <Info className="h-4 w-4 text-amber-500" />
-              <AlertTitle className="text-amber-800">Content Changed</AlertTitle>
-              <AlertDescription className="text-amber-700">
-                The total text content has changed by approximately {diffPercentage.toFixed(1)}%. 
-                Original: {originalCharacters.toLocaleString()} characters, 
-                Current: {totalCharacters.toLocaleString()} characters.
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          <form onSubmit={handleSubmit} className="space-y-8">
-            {chapters.map((chapter, index) => (
-              <div key={index} className="space-y-3 pb-6 border-b border-gray-100">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <Label htmlFor={`chapter-title-${index}`} className="text-sm font-medium text-gray-700">
-                      Chapter Title
-                    </Label>
-                    <Input
-                      id={`chapter-title-${index}`}
-                      value={chapter.title}
-                      onChange={(e) => updateChapterTitle(index, e.target.value)}
-                      className="mt-1"
-                      required
-                    />
-                  </div>
-                  
-                  <div className="ml-4">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => removeChapter(index)}
-                      disabled={chapters.length <= 1}
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-                
-                <div>
-                  <Label htmlFor={`chapter-text-${index}`} className="text-sm font-medium text-gray-700">
-                    Chapter Content
-                  </Label>
-                  <Textarea
-                    id={`chapter-text-${index}`}
-                    value={chapter.text}
-                    onChange={(e) => updateChapterText(index, e.target.value)}
-                    className="mt-1 h-40"
-                    placeholder="Enter chapter text here..."
-                    required
-                  />
-                  <div className="text-right text-xs text-gray-500 mt-1">
-                    {chapter.text.length.toLocaleString()} characters
-                  </div>
-                </div>
+    <div className="mb-8">
+      <div className="bg-amber-50 border border-amber-200 rounded-md p-4 mb-6">
+        <div className="flex items-start space-x-3">
+          <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+          <div>
+            <h3 className="font-semibold text-amber-800">Automatic Chapter Detection Failed</h3>
+            <p className="text-sm text-amber-700 mt-1">
+              We couldn't automatically detect chapters in your text. You can manually split your text into chapters below.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold flex items-center">
+          <Scissors className="h-5 w-5 mr-2 text-primary" />
+          Manual Chapter Split
+        </h2>
+        <div className="flex space-x-3">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={addChapter}
+            className="text-xs"
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Add Chapter
+          </Button>
+          <Button
+            onClick={saveSplit}
+            size="sm"
+            className="bg-primary hover:bg-primary/90 text-xs"
+          >
+            <Save className="h-3.5 w-3.5 mr-1" />
+            Save Chapters
+          </Button>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        {chapters.map((chapter, index) => (
+          <Card key={index} className="p-4">
+            <div className="flex justify-between items-center mb-3">
+              <div className="flex-1 mr-4">
+                <Label htmlFor={`chapter-title-${index}`} className="mb-1.5 block text-xs">
+                  Chapter Title
+                </Label>
+                <Input
+                  id={`chapter-title-${index}`}
+                  value={chapter.title}
+                  onChange={(e) => updateChapterTitle(index, e.target.value)}
+                  className="text-sm"
+                  maxLength={100}
+                />
               </div>
-            ))}
-            
-            <div className="flex justify-between">
               <Button
-                type="button"
                 variant="outline"
-                onClick={addChapter}
-                className="flex items-center gap-1"
+                size="sm"
+                onClick={() => removeChapter(index)}
+                className="h-8 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
               >
-                <Plus className="h-4 w-4" /> Add Chapter
-              </Button>
-              
-              <Button type="submit">
-                Continue with Chapters
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
-          </form>
-        </CardContent>
-        <CardFooter className="flex justify-between border-t pt-6">
-          <div className="text-sm text-gray-500">
-            Total: {chapters.length} chapters, {totalCharacters.toLocaleString()} characters
-          </div>
-        </CardFooter>
-      </Card>
+            
+            <Separator className="my-3" />
+            
+            <div>
+              <Label htmlFor={`chapter-content-${index}`} className="mb-1.5 block text-xs">
+                Chapter Content
+              </Label>
+              <Textarea
+                id={`chapter-content-${index}`}
+                value={chapter.text}
+                onChange={(e) => updateChapterText(index, e.target.value)}
+                rows={6}
+                className="text-sm resize-y"
+              />
+              <div className="text-xs text-slate-500 mt-1 text-right">
+                {chapter.text.length.toLocaleString()} characters
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
     </div>
   );
-}
+};
+
+export default ManualChapterSplitSection;
