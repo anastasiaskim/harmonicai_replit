@@ -60,11 +60,11 @@ export function TextPreviewSection({ text, onChaptersSelected }: TextPreviewSect
   });
 
   // Start chapter detection on component mount
-  useState(() => {
+  useEffect(() => {
     if (text) {
       detectChaptersMutation.mutate();
     }
-  });
+  }, [text]);
 
   // Handle manual chapter creation
   const handleManualChapters = (chapters: Chapter[]) => {

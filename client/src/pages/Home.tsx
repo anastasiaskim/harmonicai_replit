@@ -148,6 +148,17 @@ const Home = () => {
       description: `Created ${manualChapters.length} chapters manually.`,
     });
   };
+  
+  // Function to handle chapter selection from the TextPreviewSection
+  const handleChaptersSelected = (selectedChapters: Chapter[]) => {
+    setChapters(selectedChapters);
+    setWasChunked(true);
+    
+    toast({
+      title: "Chapters Selected",
+      description: `Selected ${selectedChapters.length} chapters for processing.`,
+    });
+  };
 
   // Function to generate audiobook
   const handleGenerateAudiobook = async () => {
@@ -269,21 +280,14 @@ const Home = () => {
           
           {/* Right Column - Preview & Results */}
           <div className="lg:col-span-7">
-            <TextPreviewSection 
-              text={text}
-              chapters={chapters}
-              fileMetadata={fileMetadata}
-              error={error}
-              wasChunked={wasChunked}
-            />
-            
-            {/* Show manual chapter split section when automatic chunking failed */}
-            {text && !wasChunked && (
-              <ManualChapterSplitSection
-                originalText={originalText}
-                onSplitComplete={handleManualSplit}
+            {text && (
+              <TextPreviewSection 
+                text={text}
+                onChaptersSelected={handleChaptersSelected}
               />
             )}
+            
+            {/* We're now using the TextPreviewSection which has its own manual split functionality */}
             
             {/* Show chapter download section when chapters are available and chunking was successful */}
             {chapters.length > 0 && wasChunked && (
@@ -293,9 +297,7 @@ const Home = () => {
               />
             )}
             
-            {generatedChapters.length > 0 && (
-              <ChaptersSection chapters={generatedChapters} />
-            )}
+            {/* We're now displaying generated chapters in our audio generation section */}
           </div>
         </div>
       </main>
