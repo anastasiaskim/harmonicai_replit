@@ -29,7 +29,7 @@ class ChapterService {
    * @param minChapters Minimum number of chapters needed to consider chunking successful
    * @returns A ChunkingResultDTO object with chapters and metadata
    */
-  detectChaptersDetailed(text: string, minChapters: number = 2): ChunkingResultDTO {
+  detectChaptersDetailed(text: string, minChapters: number = 1): ChunkingResultDTO {
     if (!text || typeof text !== 'string') {
       return {
         chapters: [],
