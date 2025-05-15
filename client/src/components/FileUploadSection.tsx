@@ -6,9 +6,24 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { formatFileSize } from '@/lib/fileHelpers';
 
+interface ProcessedResult {
+  text: string;
+  chapters: { title: string; text: string }[];
+  charCount: number;
+  fileMetadata?: {
+    key: string;
+    name: string;
+    size: number;
+    url: string;
+    mimeType: string;
+  } | null;
+  wasChunked: boolean;
+  patternMatchCounts?: Record<string, number>;
+}
+
 interface FileUploadSectionProps {
   onTextProcessed: (
-    result: { text: string; chapters: { title: string; text: string }[]; charCount: number } | null,
+    result: ProcessedResult | null,
     error?: string
   ) => void;
 }

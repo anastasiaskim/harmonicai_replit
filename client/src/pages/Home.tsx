@@ -27,6 +27,15 @@ type FileMetadata = {
   mimeType: string;
 };
 
+interface ProcessedResult {
+  text: string;
+  chapters: Chapter[];
+  charCount: number;
+  fileMetadata?: FileMetadata | null;
+  wasChunked: boolean;
+  patternMatchCounts?: Record<string, number>;
+}
+
 interface Voice {
   id: number;
   voiceId: string;
@@ -66,14 +75,7 @@ const Home = () => {
 
   // Function to handle file uploads and text processing
   const handleTextProcessed = async (
-    result: { 
-      text: string; 
-      chapters: Chapter[]; 
-      charCount: number;
-      fileMetadata?: FileMetadata | null;
-      wasChunked: boolean;
-      patternMatchCounts?: Record<string, number>;
-    } | null,
+    result: ProcessedResult | null,
     error?: string
   ) => {
     if (result) {
@@ -272,6 +274,7 @@ const Home = () => {
               chapters={chapters}
               fileMetadata={fileMetadata}
               error={error}
+              wasChunked={wasChunked}
             />
             
             {/* Show manual chapter split section when automatic chunking failed */}

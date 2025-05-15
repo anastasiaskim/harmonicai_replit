@@ -21,13 +21,15 @@ interface TextPreviewSectionProps {
   chapters: { title: string; text: string }[];
   fileMetadata?: FileMetadata | null;
   error?: string | null;
+  wasChunked?: boolean;
 }
 
 const TextPreviewSection: React.FC<TextPreviewSectionProps> = ({ 
   text, 
   chapters, 
   fileMetadata, 
-  error 
+  error,
+  wasChunked
 }) => {
   // State for chapter navigation
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
@@ -79,9 +81,13 @@ const TextPreviewSection: React.FC<TextPreviewSectionProps> = ({
                 {formatCharCount(text.length)}
               </Badge>
               {chapters.length > 0 && (
-                <Badge variant="outline" className="text-xs">
+                <Badge 
+                  variant={wasChunked === false ? "secondary" : "outline"} 
+                  className={`text-xs ${wasChunked === false ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : ""}`}
+                >
                   <BookOpen className="h-3 w-3 mr-1" />
-                  {chapters.length} chapters
+                  {chapters.length} {chapters.length === 1 ? 'chapter' : 'chapters'}
+                  {wasChunked === false && " (auto-detection failed)"}
                 </Badge>
               )}
               <Button 
