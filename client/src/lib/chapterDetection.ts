@@ -112,11 +112,33 @@ const extractChapterTitle = (line: string, index: number): string => {
  * 
  * @param text The full text content to analyze
  * @param customPatterns Optional additional patterns to use for detection
+ * @param minChapters Minimum number of chapters expected (default is 2)
  * @returns An array of chapter objects with title and text
  */
-export const detectChapters = (text: string, customPatterns?: RegExp[]): Chapter[] => {
-  // Simply delegate to our comprehensive chunking utility
-  return chunkByChapter(text, customPatterns);
+export const detectChapters = (
+  text: string, 
+  customPatterns?: RegExp[],
+  minChapters: number = 2
+): Chapter[] => {
+  // Simply delegate to our comprehensive chunking utility and return just the chapters
+  const result = chunkByChapter(text, customPatterns, minChapters);
+  return result.chapters;
+};
+
+/**
+ * Enhanced chapter detection that returns detailed information about the chunking process
+ * 
+ * @param text The full text content to analyze
+ * @param customPatterns Optional additional patterns to use for detection
+ * @param minChapters Minimum number of chapters expected (default is 2)
+ * @returns A ChunkingResult with detailed information
+ */
+export const detectChaptersDetailed = (
+  text: string, 
+  customPatterns?: RegExp[],
+  minChapters: number = 2
+): ChunkingResult => {
+  return chunkByChapter(text, customPatterns, minChapters);
 };
 
 /**
@@ -153,16 +175,28 @@ export const estimateAudioSize = (text: string): number => {
  * @returns The extracted book title or a default title
  */
 /**
+ * Result of the chapter chunking operation with metadata
+ */
+export interface ChunkingResult {
+  chapters: Chapter[];
+  wasChunked: boolean;  // Indicates if actual chapters were detected
+  originalText: string; // The original text content
+  patternMatchCounts: Record<string, number>; // Statistics on pattern matches
+}
+
+/**
  * Chunks text content into chapters based on configured patterns
  * 
  * @param text The full text content to split into chapters
  * @param customPatterns Optional additional regex patterns to identify chapter headings
- * @returns An array of chapter objects with title and text
+ * @param minChapters Minimum number of chapters expected (default is 2)
+ * @returns A ChunkingResult object with chapters and metadata
  */
 export const chunkByChapter = (
   text: string, 
-  customPatterns?: RegExp[]
-): Chapter[] => {
+  customPatterns?: RegExp[],
+  minChapters: number = 2
+): ChunkingResult => {
   console.log('Starting chapter chunking process...');
   
   // Create a combined set of patterns (standard + any custom ones)
@@ -172,12 +206,15 @@ export const chunkByChapter = (
     console.log(`Added ${customPatterns.length} custom chapter detection patterns`);
   }
   
+  // Initialize pattern match counter to track which patterns are working
+  const patternMatchCounts: Record<string, number> = {};
+  
   // Split text into lines
   const lines = text.split('\n');
   console.log(`Text split into ${lines.length} lines for processing`);
   
   // Store detected chapter boundaries (line numbers)
-  const chapterBoundaries: { lineNumber: number, title: string }[] = [];
+  const chapterBoundaries: { lineNumber: number, title: string, patternName?: string }[] = [];
   
   // Scan through lines to find chapter headings
   for (let i = 0; i < lines.length; i++) {
@@ -189,12 +226,19 @@ export const chunkByChapter = (
     // Check if this line matches our chapter heading patterns
     let isHeading = false;
     let extractedTitle = '';
+    let patternName = '';
     
     // First check against explicit patterns
-    for (const pattern of patterns) {
+    for (let j = 0; j < patterns.length; j++) {
+      const pattern = patterns[j];
       const match = line.match(pattern);
+      
       if (match) {
         isHeading = true;
+        patternName = `pattern-${j}`; // Track which pattern matched
+        
+        // Count pattern matches for analytics
+        patternMatchCounts[patternName] = (patternMatchCounts[patternName] || 0) + 1;
         
         // Extract an appropriate title based on the matched pattern
         if (match[1]?.toLowerCase() === 'chapter' || 
@@ -236,6 +280,8 @@ export const chunkByChapter = (
       if (line.length > 2 && line.length < 50 && isPreviousLineBlank && isNextLineBlank) {
         // This looks like an isolated title line
         isHeading = true;
+        patternName = 'heuristic-isolated';
+        patternMatchCounts[patternName] = (patternMatchCounts[patternName] || 0) + 1;
         extractedTitle = line;
       }
       
@@ -244,6 +290,8 @@ export const chunkByChapter = (
           line === line.toUpperCase() && 
           line !== line.toLowerCase()) {
         isHeading = true;
+        patternName = 'heuristic-caps';
+        patternMatchCounts[patternName] = (patternMatchCounts[patternName] || 0) + 1;
         extractedTitle = line;
       }
     }
@@ -253,7 +301,8 @@ export const chunkByChapter = (
       console.log(`Detected chapter heading at line ${i+1}: "${extractedTitle}"`);
       chapterBoundaries.push({
         lineNumber: i,
-        title: extractedTitle
+        title: extractedTitle,
+        patternName
       });
     }
   }
@@ -279,7 +328,10 @@ export const chunkByChapter = (
     }
   }
   
-  // Handle the case where no chapters were detected
+  // Handle the case where no chapters were detected or not enough chapters
+  // We consider the text successfully chunked if we found at least minChapters
+  const wasChunked = chapters.length >= minChapters;
+  
   if (chapters.length === 0 && text.trim().length > 0) {
     console.log('No chapter boundaries detected, treating entire text as one chapter');
     chapters.push({
@@ -289,8 +341,15 @@ export const chunkByChapter = (
   }
   
   console.log(`Chunking complete. Extracted ${chapters.length} chapters.`);
+  console.log(`Was text successfully chunked? ${wasChunked}`);
+  console.log('Pattern match statistics:', patternMatchCounts);
   
-  return chapters;
+  return {
+    chapters,
+    wasChunked,
+    originalText: text,
+    patternMatchCounts
+  };
 };
 
 /**

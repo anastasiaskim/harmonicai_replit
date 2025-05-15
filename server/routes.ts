@@ -286,13 +286,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Text content is required" });
       }
       
-      // Detect chapters in the text
-      const chapters = chapterService.detectChapters(text);
-      console.log(`Detected ${chapters.length} chapters in the text`);
+      // Detect chapters in the text with detailed information
+      const chunkingResult = chapterService.detectChaptersDetailed(text);
+      console.log(`Detected ${chunkingResult.chapters.length} chapters in the text`);
+      console.log(`Was chunking successful? ${chunkingResult.wasChunked ? 'Yes' : 'No'}`);
       
-      if (chapters.length === 0) {
-        return res.status(400).json({ error: "No chapters could be detected in the text" });
-      }
+      // Even if no chapters were detected, we'll still return the original text as a single chapter
       
       // Create a ZIP archive in memory
       console.log("Creating ZIP archive...");
@@ -308,46 +307,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return cleanTitle.substring(0, 50);
       };
       
-      // Create a table of contents file
-      let tocContent = `${bookTitle}\nTable of Contents\n\n`;
-      chapters.forEach((chapter: { title: string; text: string }, index: number) => {
-        tocContent += `${index + 1}. ${chapter.title}\n`;
-      });
-      zip.file("00_table_of_contents.txt", tocContent);
-      
-      // Add each chapter as a separate text file
-      chapters.forEach((chapter: { title: string; text: string }, index: number) => {
-        // Create a safe filename with numeric prefix for ordering
-        const fileName = `${String(index + 1).padStart(2, '0')}_${safeFileName(chapter.title)}.txt`;
+      // Check if chunking was successful
+      if (chunkingResult.wasChunked) {
+        // Create a table of contents file
+        let tocContent = `${bookTitle}\nTable of Contents\n\n`;
+        chunkingResult.chapters.forEach((chapter: { title: string; text: string }, index: number) => {
+          tocContent += `${index + 1}. ${chapter.title}\n`;
+        });
+        zip.file("00_table_of_contents.txt", tocContent);
         
-        // Format chapter content with proper headers
-        let content = `${chapter.title}\n`;
-        content += '='.repeat(chapter.title.length) + '\n\n';
-        content += chapter.text;
+        // Add each chapter as a separate text file
+        chunkingResult.chapters.forEach((chapter: { title: string; text: string }, index: number) => {
+          // Create a safe filename with numeric prefix for ordering
+          const fileName = `${String(index + 1).padStart(2, '0')}_${safeFileName(chapter.title)}.txt`;
+          
+          // Format chapter content with proper headers
+          let content = `${chapter.title}\n`;
+          content += '='.repeat(chapter.title.length) + '\n\n';
+          content += chapter.text;
+          
+          // Add file to the ZIP archive
+          zip.file(fileName, content);
+        });
         
-        // Add file to the ZIP archive
-        zip.file(fileName, content);
-      });
-      
-      // Generate the ZIP file as a buffer
-      console.log("Generating ZIP file...");
-      const zipBuffer = await zip.generateAsync({
-        type: "nodebuffer",
-        compression: "DEFLATE",
-        compressionOptions: {
-          level: 6
-        }
-      });
-      
-      // Set response headers for file download
-      const zipFileName = `${safeFileName(bookTitle)}_chapters.zip`;
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename=${zipFileName}`);
-      res.setHeader('Content-Length', zipBuffer.length);
-      
-      // Send the ZIP file to the client
-      console.log(`Sending ZIP file: ${zipFileName} (${zipBuffer.length} bytes)`);
-      res.send(zipBuffer);
+        // Generate the ZIP file as a buffer
+        console.log("Generating ZIP file with multiple chapters...");
+        const zipBuffer = await zip.generateAsync({
+          type: "nodebuffer",
+          compression: "DEFLATE",
+          compressionOptions: {
+            level: 6
+          }
+        });
+        
+        // Set response headers for file download
+        const zipFileName = `${safeFileName(bookTitle)}_chapters.zip`;
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename=${zipFileName}`);
+        res.setHeader('Content-Length', zipBuffer.length);
+        
+        // Send the ZIP file to the client
+        console.log(`Sending ZIP file: ${zipFileName} (${zipBuffer.length} bytes)`);
+        res.send(zipBuffer);
+      } else {
+        // Chunking was not successful, return a single text file instead
+        console.log("Chunking was not successful, returning a single text file");
+        
+        // Add a header to explain why the file wasn't chunked
+        let content = `${bookTitle}\n`;
+        content += '='.repeat(bookTitle.length) + '\n\n';
+        content += "Note: This book could not be automatically divided into chapters.\n";
+        content += "The complete text is provided below.\n\n";
+        content += "---\n\n";
+        content += chunkingResult.originalText;
+        
+        // Set response headers for single file download
+        const fileName = `${safeFileName(bookTitle)}.txt`;
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
+        
+        // Send the single file to the client
+        console.log(`Sending single file: ${fileName} (${content.length} bytes)`);
+        res.send(content);
+      }
     } catch (error) {
       console.error("Error creating chapter ZIP:", error);
       if (error instanceof Error) {

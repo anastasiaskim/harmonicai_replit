@@ -99,11 +99,21 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
       const data = await response.json();
       onTextProcessed(data);
       
-      // Update the success message to include information about chapter chunking
-      toast({
-        title: "File Successfully Chunked",
-        description: `${file.name} has been processed and divided into ${data.chapters?.length || 0} chapters.`,
-      });
+      // Check if chapters were detected successfully 
+      const chaptersDetected = data.chapters?.length > 1;
+      
+      if (chaptersDetected) {
+        toast({
+          title: "File Successfully Chunked",
+          description: `${file.name} has been processed and divided into ${data.chapters?.length || 0} chapters.`,
+        });
+      } else {
+        toast({
+          title: "File Processed",
+          description: `${file.name} has been processed, but no chapters could be detected automatically.`,
+          variant: "default"
+        });
+      }
     } catch (err: any) {
       const errorMessage = err.message || 'Failed to process file';
       setError(errorMessage);
