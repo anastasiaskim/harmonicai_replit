@@ -54,16 +54,20 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
     }
   }, []);
 
-  // Validate file type - only accept .txt for this phase
+  // Validate file type - accept txt, epub, and pdf files
   const validateFile = (file: File): boolean => {
-    const validTypes = ['.txt', 'text/plain'];
+    const validTypes = [
+      '.txt', 'text/plain',
+      '.epub', 'application/epub+zip',
+      '.pdf', 'application/pdf'
+    ];
     const fileType = file.type || file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
     
     if (!validTypes.some(type => fileType.includes(type))) {
-      setError("Invalid file type. Please upload a TXT file only.");
+      setError("Invalid file type. Please upload a TXT, EPUB, or PDF file.");
       toast({
         title: "Invalid file type",
-        description: "Please upload a TXT file only.",
+        description: "Please upload a TXT, EPUB, or PDF file.",
         variant: "destructive",
       });
       return false;
@@ -203,8 +207,14 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
                   <Badge variant="outline" className="text-xs">
                     {formatFileSize(selectedFile.size)}
                   </Badge>
-                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                    TXT
+                  <Badge variant="outline" className={`text-xs ${
+                    selectedFile.name.toLowerCase().endsWith('.pdf') 
+                      ? 'bg-red-50 text-red-700 border-red-200'
+                      : selectedFile.name.toLowerCase().endsWith('.epub')
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : 'bg-green-50 text-green-700 border-green-200'
+                  }`}>
+                    {selectedFile.name.split('.').pop()?.toUpperCase() || 'TXT'}
                   </Badge>
                 </div>
                 {isProcessing ? (
@@ -252,13 +262,13 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
             Your file will be automatically chunked into chapters
           </p>
           <p className="text-xs text-gray-400 mt-1">
-            Supported format: .txt only (Max 5MB)
+            Supported formats: .txt, .epub, .pdf (Max 5MB)
           </p>
           <input 
             type="file" 
             ref={fileInputRef}
             className="hidden" 
-            accept=".txt" 
+            accept=".txt,.epub,.pdf" 
             onChange={handleFileChange}
             disabled={isProcessing}
           />
