@@ -18,11 +18,13 @@ interface Chapter {
 interface ManualChapterSplitSectionProps {
   originalText: string;
   onSplitComplete: (chapters: Chapter[]) => void;
+  showDetectionFailedAlert?: boolean;
 }
 
 const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
   originalText,
-  onSplitComplete
+  onSplitComplete,
+  showDetectionFailedAlert = false
 }) => {
   const [chapters, setChapters] = useState<Chapter[]>([
     { title: 'Chapter 1', text: originalText || '' }
@@ -226,17 +228,19 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
 
   return (
     <div className="mb-8">
-      <div className="bg-amber-50 border border-amber-200 rounded-md p-4 mb-6">
-        <div className="flex items-start space-x-3">
-          <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
-          <div>
-            <h3 className="font-semibold text-amber-800">Automatic Chapter Detection Failed</h3>
-            <p className="text-sm text-amber-700 mt-1">
-              We couldn't automatically detect chapters in your text. You can manually split your text into chapters below.
-            </p>
+      {showDetectionFailedAlert && (
+        <div className="bg-amber-50 border border-amber-200 rounded-md p-4 mb-6">
+          <div className="flex items-start space-x-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-amber-800">Automatic Chapter Detection Failed</h3>
+              <p className="text-sm text-amber-700 mt-1">
+                We couldn't automatically detect chapters in your text. You can manually split your text into chapters below.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold flex items-center">

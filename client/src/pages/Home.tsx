@@ -277,11 +277,12 @@ const Home = () => {
               wasChunked={wasChunked}
             />
             
-            {/* Show manual chapter split section when automatic chunking failed */}
+            {/* Show manual chapter split section when automatic chunking failed but only if we have text */}
             {text && !wasChunked && (
               <ManualChapterSplitSection
                 originalText={originalText}
                 onSplitComplete={handleManualSplit}
+                showDetectionFailedAlert={true}
               />
             )}
             
