@@ -65,7 +65,7 @@ class AudioService {
   };
 
   /**
-   * Convert text to speech using ElevenLabs API
+   * Convert text to speech using ElevenLabs API with SDK
    */
   async convertTextToSpeech(request: TextToSpeechRequest): Promise<string> {
     if (!this.elevenLabsConfig.apiKey) {
@@ -90,7 +90,7 @@ class AudioService {
       return `/audio/${fileName}`;
     }
     
-    // Make API call to ElevenLabs
+    // Make API call to ElevenLabs using SDK
     try {
       console.log(`Calling ElevenLabs API for voice ${voiceId} (${elevenLabsVoiceId})`);
       console.log(`API key exists and length: ${this.elevenLabsConfig.apiKey ? this.elevenLabsConfig.apiKey.substring(0, 4) + '...' : 'Missing'}`);
@@ -99,34 +99,33 @@ class AudioService {
       // Create necessary directories
       ensureDirectoryExists(audioDir);
       
-      const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
-      console.log(`Sending request to: ${url}`);
+      // Import the ElevenLabs SDK
+      const elevenlabs = require('elevenlabs');
+      console.log("Loaded ElevenLabs SDK");
       
-      const response = await axios.post(
-        url,
-        {
-          text,
-          model_id: "eleven_monolingual_v1",
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.5
-          }
+      // Create client with API key
+      const client = new elevenlabs.ElevenLabsClient({
+        apiKey: this.elevenLabsConfig.apiKey,
+      });
+      
+      console.log(`Generating audio with voice ID: ${elevenLabsVoiceId}`);
+      
+      // Convert text to speech using the SDK
+      const audioResponse = await client.textToSpeech({
+        voiceId: elevenLabsVoiceId,
+        text: text,
+        model_id: "eleven_monolingual_v1",
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.5
         },
-        {
-          headers: {
-            'Accept': 'audio/mpeg',
-            'xi-api-key': this.elevenLabsConfig.apiKey,
-            'Content-Type': 'application/json'
-          },
-          responseType: 'arraybuffer'
-        }
-      );
+        output_format: "mp3_44100_128"
+      });
       
-      console.log(`ElevenLabs API response status: ${response.status}`);
-      console.log(`Response data length: ${response.data?.length || 0} bytes`);
+      console.log(`Received audio response, type: ${typeof audioResponse}`);
       
-      // Save the audio file
-      fs.writeFileSync(filePath, Buffer.from(response.data));
+      // Save the audio file (audioResponse is an ArrayBuffer)
+      fs.writeFileSync(filePath, Buffer.from(audioResponse));
       console.log(`Audio file saved to: ${filePath}`);
       
       // Update analytics
@@ -134,27 +133,9 @@ class AudioService {
       
       return `/audio/${fileName}`;
     } catch (error: any) {
-      console.error('Error calling ElevenLabs API:', error?.response?.status, error?.response?.statusText || error);
+      console.error('Error calling ElevenLabs API:', error);
       console.error('Error message:', error.message);
-      
-      if (error.response) {
-        console.error('Response status:', error.response.status);
-        console.error('Response headers:', JSON.stringify(error.response.headers));
-        
-        // If the response contains text data, log it
-        if (error.response.data) {
-          try {
-            if (error.response.data instanceof Buffer) {
-              const textData = error.response.data.toString('utf8');
-              console.error('Response data (buffer):', textData.substring(0, 200));
-            } else {
-              console.error('Response data:', error.response.data);
-            }
-          } catch (e) {
-            console.error('Could not parse error response data');
-          }
-        }
-      }
+      console.error('Error stack:', error.stack);
       
       // If in development mode, create a mock audio file for testing
       if (process.env.NODE_ENV === 'development') {
@@ -164,7 +145,7 @@ class AudioService {
         return `/audio/${fileName}`;
       }
       
-      throw new Error(`Failed to generate audio: ${error?.response?.statusText || error?.message || 'Unknown error'}`);
+      throw new Error(`Failed to generate audio: ${error?.message || 'Unknown error'}`);
     }
   }
 
