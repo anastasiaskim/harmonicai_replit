@@ -2,7 +2,7 @@
  * Client-side EPUB Parser using EPUB.js
  * Handles parsing of EPUB files in the browser
  */
-import * as epubjs from 'epubjs';
+import ePub from 'epubjs';
 
 export interface EpubChapter {
   id: string;
@@ -33,13 +33,12 @@ export interface EpubParseResult {
  */
 export async function parseEpubFile(file: File): Promise<EpubParseResult> {
   try {
-    // Convert file to array buffer
+    // Create array buffer from file
     const arrayBuffer = await file.arrayBuffer();
     
-    // Create book object
-    const book = epubjs.default(arrayBuffer);
-    
-    // Open the book
+    // Initialize the book using the constructor
+    // @ts-ignore - epubjs types are not fully compatible with our usage
+    const book = new ePub(arrayBuffer);
     await book.ready;
     
     // Get metadata
@@ -47,89 +46,115 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
     const title = metadata.title || 'Untitled';
     const author = metadata.creator || 'Unknown Author';
     
-    // Get table of contents
+    // Get the table of contents
     const toc = await book.loaded.navigation;
-    const navItems = toc.toc || [];
     
-    // Get cover
-    let coverUrl = '';
+    // Extract the cover URL if available
+    let coverUrl: string | undefined = undefined;
     try {
-      const cover = book.packaging.metadata.cover;
-      if (cover) {
-        const coverHref = book.packaging.manifest.find((item: any) => item.id === cover)?.href;
-        if (coverHref) {
-          coverUrl = await book.archive.createUrl(coverHref, { base64: true });
+      // Try to get cover from metadata or package
+      const coverHref = book.packaging?.manifest?.['cover-image']?.href || 
+                       book.packaging?.manifest?.['cover']?.href;
+      
+      if (coverHref) {
+        const coverBlob = await book.resources.get(coverHref);
+        if (coverBlob) {
+          coverUrl = URL.createObjectURL(await coverBlob.blob());
         }
       }
-    } catch (e) {
-      console.error('Error extracting cover:', e);
+    } catch (error) {
+      console.warn('Could not extract cover image:', error);
     }
     
-    // Process chapters
+    // Extract chapters from navigation
     const chapters: EpubChapter[] = [];
-    const fullTextContent: string[] = [];
+    let index = 0;
     
-    try {
-      // Get spine items (actual content order)
-      const spine = book.spine?.items || [];
+    // Process each TOC item
+    // @ts-ignore - toc might not have an iterable toc property
+    const tocItems = toc.toc || [];
+    for (const item of tocItems) {
+      // Get the chapter ID from the href
+      const href = item.href || '';
+      const id = href.split('#')[0] || `chapter-${index}`;
       
-      // Process each spine item as a chapter
-      for (let i = 0; i < spine.length; i++) {
-        const item = spine[i];
-        const href = item.href;
-        const id = item.idref;
+      // Determine heading level for UI indentation
+      // @ts-ignore - level might not exist on NavItem
+      const level = item.level || 0;
+      
+      // Create the chapter object
+      const chapter: EpubChapter = {
+        id,
+        href,
+        title: item.label || `Chapter ${index + 1}`,
+        level,
+        index: index++
+      };
+      
+      // Add to chapters array
+      chapters.push(chapter);
+    }
+    
+    // If no TOC found, try to use spine items
+    if (chapters.length === 0 && book.spine) {
+      // @ts-ignore - epubjs types are incomplete
+      const spineItems = book.spine.items || [];
+      for (let i = 0; i < spineItems.length; i++) {
+        // @ts-ignore - epubjs types are incomplete
+        const spineItem = spineItems[i];
+        const id = spineItem.idref || `spine-${i}`;
+        const href = spineItem.href || '';
         
-        // Find matching TOC item for title
-        const tocItem = findTocItemByHref(navItems, href) || { title: `Chapter ${i + 1}` };
-        
-        // Get content
-        const section = await book.load(item.href);
-        
-        // Extract text content from HTML
-        const doc = new DOMParser().parseFromString(section.contents, 'text/html');
-        const textContent = extractTextFromHtml(doc);
-        
-        // Determine heading level (for indentation in UI)
-        const level = determineHeadingLevel(tocItem.title || '', i);
-        
-        // Add to chapters array
         chapters.push({
           id,
           href,
-          title: tocItem.title || `Chapter ${i + 1}`,
-          level,
-          text: textContent,
+          title: `Chapter ${i + 1}`,
+          level: 0,
           index: i
         });
-        
-        // Add to full text content with proper chapter heading
-        fullTextContent.push(`## ${tocItem.title || `Chapter ${i + 1}`}\n${textContent}`);
       }
-    } catch (err) {
-      console.error('Error processing chapters:', err);
     }
     
-    // Combine the text content with chapter markers
-    const content = fullTextContent.join('\n\n');
+    // Extract text content for each chapter
+    let fullContent = '';
+    for (const chapter of chapters) {
+      try {
+        if (chapter.href) {
+          // Get the chapter content
+          const chapterDoc = await book.load(chapter.href);
+          
+          // Extract text content from HTML
+          if (chapterDoc && chapterDoc.contents) {
+            const text = extractTextFromHtml(chapterDoc.document);
+            chapter.text = text.trim();
+            fullContent += `${chapter.text}\n\n`;
+          }
+        }
+      } catch (error) {
+        console.warn(`Could not extract content for chapter: ${chapter.title}`, error);
+      }
+    }
     
+    // Return the result
     return {
       title,
       author,
       chapters,
-      toc: navItems,
+      toc,
       metadata,
-      success: true,
-      content,
-      coverUrl
+      content: fullContent,
+      coverUrl,
+      success: true
     };
+    
   } catch (error) {
-    console.error('Error parsing EPUB:', error);
+    console.error('Error parsing EPUB file:', error);
     return {
       title: '',
       author: '',
       chapters: [],
       toc: [],
-      metadata: {},
+      metadata: null,
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error parsing EPUB file'
     };
@@ -137,83 +162,58 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
 }
 
 /**
- * Helper function to find TOC item by href
- */
-function findTocItemByHref(toc: any[], href: string): any | null {
-  for (const item of toc) {
-    if (item.href && (item.href === href || href.includes(item.href))) {
-      return item;
-    }
-    if (item.subitems && item.subitems.length) {
-      const found = findTocItemByHref(item.subitems, href);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-/**
  * Extract readable text content from HTML
  */
 function extractTextFromHtml(doc: Document): string {
-  // Remove script and style elements
-  const scripts = doc.querySelectorAll('script, style');
-  scripts.forEach(el => el.remove());
+  // Get all text nodes
+  const walker = doc.createTreeWalker(
+    doc.body,
+    NodeFilter.SHOW_TEXT,
+    null
+  );
   
-  // Extract content from body
-  const bodyElement = doc.body;
-  if (!bodyElement) return '';
-  
-  // Get all headings for potential chapter identification
-  const headings = bodyElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
-  const paragraphs = bodyElement.querySelectorAll('p');
-  
-  let textContent = '';
-  
-  // Process headings (might be chapter titles)
-  headings.forEach(heading => {
-    const headingText = heading.textContent?.trim();
-    if (headingText) {
-      // Add heading with appropriate markdown emphasis
-      textContent += `\n### ${headingText}\n\n`;
-    }
-  });
-  
-  // If no headings found, just get all text
-  if (headings.length === 0 || textContent.length === 0) {
-    // Get all paragraphs
-    paragraphs.forEach(p => {
-      const paragraphText = p.textContent?.trim();
-      if (paragraphText) {
-        textContent += paragraphText + '\n\n';
+  let text = '';
+  let node;
+  while (node = walker.nextNode()) {
+    // Skip text in script and style elements
+    const parent = node.parentNode;
+    if (parent && 
+        parent.nodeName !== 'SCRIPT' && 
+        parent.nodeName !== 'STYLE') {
+      
+      // Check if the parent is a heading element
+      const isHeading = parent.nodeName.match(/^H[1-6]$/);
+      
+      // Add newlines for paragraphs and headings
+      if (parent.nodeName === 'P' || isHeading) {
+        if (text.length > 0 && !text.endsWith('\n\n')) {
+          text += '\n\n';
+        }
       }
-    });
-    
-    // If still no content, get all text
-    if (textContent.length === 0) {
-      textContent = bodyElement.textContent?.trim() || '';
-      // Clean up whitespace
-      textContent = textContent.replace(/\s+/g, ' ').trim();
+      
+      // Format headings with markdown syntax
+      if (isHeading) {
+        const level = parseInt(parent.nodeName.substring(1));
+        // Add markdown heading markers based on level (##, ###, etc.)
+        const prefix = '#'.repeat(Math.min(level + 1, 6)) + ' ';
+        text += prefix;
+      }
+      
+      // Add the text content
+      text += node.textContent ? node.textContent.trim() : '';
+      
+      // Add a newline after paragraphs and headings
+      if (parent.nodeName === 'P' || isHeading) {
+        text += '\n\n';
+      } else if (parent.nodeName === 'BR') {
+        text += '\n';
+      }
     }
   }
   
-  return textContent;
-}
-
-/**
- * Determine heading level for UI indentation
- */
-function determineHeadingLevel(title: string, index: number): number {
-  // Check if title contains chapter or part indicators
-  if (/^(chapter|part|section)\s+\d+/i.test(title)) {
-    return 1;
-  } else if (/^(chapter|part|section)/i.test(title)) {
-    return 1;
-  } else if (index === 0) {
-    // First item might be front matter
-    return 0;
-  }
-  
-  // Default level for items without clear hierarchy
-  return 2;
+  // Clean up extra whitespace
+  return text
+    .replace(/\n{3,}/g, '\n\n')  // Replace 3 or more newlines with 2
+    .replace(/[ \t]+/g, ' ')     // Replace multiple spaces/tabs with a single space
+    .trim();
 }

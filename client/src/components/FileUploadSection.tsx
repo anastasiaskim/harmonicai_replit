@@ -271,100 +271,142 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
   };
 
   return (
-    <Card>
-      <CardContent className="p-6">
-        <CardTitle className="font-bold text-xl text-gray-800 mb-4 flex items-center">
-          <Upload className="h-5 w-5 text-primary mr-2" />
-          Upload Your Text File
-        </CardTitle>
-        
-        {/* Error alert */}
-        {error && (
-          <Alert variant="destructive" className="mb-4">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        
-        {/* Selected file display */}
-        {selectedFile && !error && (
-          <div className="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200">
-            <div className="flex items-start">
-              <FileText className="h-10 w-10 text-primary mr-3 flex-shrink-0" />
-              <div className="flex-1">
-                <h3 className="font-medium text-gray-800">{selectedFile.name}</h3>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  <Badge variant="outline" className="text-xs">
-                    {formatFileSize(selectedFile.size)}
-                  </Badge>
-                  <Badge variant="outline" className={`text-xs ${
-                    selectedFile.name.toLowerCase().endsWith('.pdf') 
-                      ? 'bg-red-50 text-red-700 border-red-200'
-                      : selectedFile.name.toLowerCase().endsWith('.epub')
-                        ? 'bg-blue-50 text-blue-700 border-blue-200'
-                        : 'bg-green-50 text-green-700 border-green-200'
-                  }`}>
-                    {selectedFile.name.split('.').pop()?.toUpperCase() || 'TXT'}
-                  </Badge>
+    <div>
+      <Card>
+        <CardContent className="p-6">
+          <CardTitle className="font-bold text-xl text-gray-800 mb-4 flex items-center">
+            <Upload className="h-5 w-5 text-primary mr-2" />
+            Upload File
+          </CardTitle>
+          
+          {/* Error alert */}
+          {error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          
+          {/* Selected file display */}
+          {selectedFile && !error && (
+            <div className="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200">
+              <div className="flex items-start">
+                <div className={`p-2 rounded-md flex-shrink-0 mr-3 ${
+                  selectedFile.name.toLowerCase().endsWith('.epub')
+                    ? 'bg-blue-50'
+                    : selectedFile.name.toLowerCase().endsWith('.pdf')
+                      ? 'bg-red-50'
+                      : 'bg-green-50'
+                }`}>
+                  {selectedFile.name.toLowerCase().endsWith('.epub') ? (
+                    <BookOpen className="h-8 w-8 text-blue-500" />
+                  ) : selectedFile.name.toLowerCase().endsWith('.pdf') ? (
+                    <FileIcon className="h-8 w-8 text-red-500" />
+                  ) : (
+                    <FileText className="h-8 w-8 text-green-500" />
+                  )}
                 </div>
-                {isProcessing ? (
-                  <div className="mt-2">
-                    <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-                      <div className="bg-primary h-1.5 rounded-full animate-pulse" style={{ width: '70%' }}></div>
-                    </div>
-                    <p className="text-xs text-primary mt-1">
-                      <span className="font-medium">Processing file...</span> Detecting chapters and analyzing text
-                    </p>
+                <div className="flex-1">
+                  <h3 className="font-medium text-gray-800">{selectedFile.name}</h3>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    <Badge variant="outline" className="text-xs">
+                      {formatFileSize(selectedFile.size)}
+                    </Badge>
+                    <Badge variant="outline" className={`text-xs ${
+                      selectedFile.name.toLowerCase().endsWith('.pdf') 
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : selectedFile.name.toLowerCase().endsWith('.epub')
+                          ? 'bg-blue-50 text-blue-700 border-blue-200'
+                          : 'bg-green-50 text-green-700 border-green-200'
+                    }`}>
+                      {selectedFile.name.split('.').pop()?.toUpperCase() || 'TXT'}
+                    </Badge>
                   </div>
-                ) : (
-                  <p className="text-xs text-green-600 mt-2">
-                    <span className="font-medium">Processing complete!</span> Text has been chunked into chapters
-                  </p>
-                )}
+                  {isProcessing ? (
+                    <div className="mt-2">
+                      <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+                        <div className="bg-primary h-1.5 rounded-full animate-pulse" style={{ width: '70%' }}></div>
+                      </div>
+                      <p className="text-xs text-primary mt-1">
+                        <span className="font-medium">Processing file...</span> {
+                          selectedFile.name.toLowerCase().endsWith('.epub')
+                            ? 'Parsing EPUB structure and extracting content'
+                            : 'Detecting chapters and analyzing text'
+                        }
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-green-600 mt-2">
+                      <span className="font-medium">Processing complete!</span> {
+                        isEpubPreviewMode 
+                          ? 'EPUB file parsed successfully' 
+                          : 'Text has been chunked into chapters'
+                      }
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        )}
-        
-        {/* File upload drop zone */}
-        <div 
-          className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-300 ${
-            selectedFile && !error ? 'mb-0' : 'mb-4'
-          } ${
-            dragActive 
-              ? 'border-primary bg-primary/5' 
-              : 'border-gray-200 hover:border-primary hover:bg-gray-50'
-          }`}
-          onClick={openFileSelector}
-          onDragEnter={handleDrag}
-          onDragOver={handleDrag}
-          onDragLeave={handleDrag}
-          onDrop={handleDrop}
-        >
-          <FileText className="h-10 w-10 mx-auto text-gray-400" />
-          <p className="mt-2 text-gray-600 font-medium">
-            {selectedFile && !error
-              ? 'Upload a different file'
-              : 'Drag & drop your text file here or click to browse'
-            }
-          </p>
-          <p className="text-sm text-gray-500 mt-1">
-            Your file will be automatically chunked into chapters
-          </p>
-          <p className="text-xs text-gray-400 mt-1">
-            Supported formats: .txt, .epub, .pdf (Max 5MB)
-          </p>
-          <input 
-            type="file" 
-            ref={fileInputRef}
-            className="hidden" 
-            accept=".txt,.epub,.pdf" 
-            onChange={handleFileChange}
-            disabled={isProcessing}
-          />
-        </div>
-      </CardContent>
-    </Card>
+          )}
+          
+          {/* Only show the drop zone if we're not in EPUB preview mode */}
+          {!isEpubPreviewMode && (
+            <div 
+              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-300 ${
+                selectedFile && !error ? 'mb-0' : 'mb-4'
+              } ${
+                dragActive 
+                  ? 'border-primary bg-primary/5' 
+                  : 'border-gray-200 hover:border-primary hover:bg-gray-50'
+              }`}
+              onClick={openFileSelector}
+              onDragEnter={handleDrag}
+              onDragOver={handleDrag}
+              onDragLeave={handleDrag}
+              onDrop={handleDrop}
+            >
+              <div className="flex justify-center space-x-2">
+                <FileText className="h-8 w-8 text-gray-400" />
+                <BookOpen className="h-8 w-8 text-blue-400" />
+                <FileIcon className="h-8 w-8 text-red-400" />
+              </div>
+              <p className="mt-2 text-gray-600 font-medium">
+                {selectedFile && !error
+                  ? 'Upload a different file'
+                  : 'Drag & drop your file here or click to browse'
+                }
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                TXT files will be automatically chunked into chapters
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                EPUB files will be parsed client-side with chapter preview
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                Supported formats: .txt, .epub, .pdf (Max 5MB)
+              </p>
+              <input 
+                type="file" 
+                ref={fileInputRef}
+                className="hidden" 
+                accept=".txt,.epub,.pdf" 
+                onChange={handleFileChange}
+                disabled={isProcessing}
+              />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      
+      {/* EPUB Preview Section */}
+      {isEpubPreviewMode && epubData && (
+        <EpubPreviewSection 
+          epubData={epubData}
+          onSelectChapter={(content, title) => handleEpubContent(content, title)}
+          onUseAllContent={(content) => handleEpubContent(content)}
+        />
+      )}
+    </div>
   );
 };
 

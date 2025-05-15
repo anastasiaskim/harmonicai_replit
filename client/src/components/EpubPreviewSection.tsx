@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, BookOpenIcon, ListIcon } from 'lucide-react';
-import { EpubChapter, EpubParseResult } from '@/lib/epubParser';
+import { BookOpen, List, FileText, ChevronRight } from 'lucide-react';
+import { EpubParseResult, EpubChapter } from '@/lib/epubParser';
 
 interface EpubPreviewSectionProps {
   epubData: EpubParseResult;
@@ -12,117 +12,202 @@ interface EpubPreviewSectionProps {
   onUseAllContent: (content: string) => void;
 }
 
-const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({ 
-  epubData, 
+const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
+  epubData,
   onSelectChapter,
-  onUseAllContent
+  onUseAllContent,
 }) => {
-  const [selectedChapter, setSelectedChapter] = useState<EpubChapter | null>(
-    epubData.chapters.length > 0 ? epubData.chapters[0] : null
-  );
-  const [activeTab, setActiveTab] = useState("toc");
-
+  const [activeTab, setActiveTab] = useState('toc');
+  const [selectedChapter, setSelectedChapter] = useState<EpubChapter | null>(null);
+  
+  // Format all chapters into a markdown string for processing
+  const processAllContent = () => {
+    let allContent = '';
+    
+    // Add book title as main heading
+    allContent += `# ${epubData.title}\n\n`;
+    
+    // Process each chapter
+    epubData.chapters.forEach(chapter => {
+      if (chapter.text) {
+        // Add chapter title as subheading
+        allContent += `## ${chapter.title}\n\n`;
+        allContent += `${chapter.text}\n\n`;
+      }
+    });
+    
+    onUseAllContent(allContent);
+  };
+  
+  // Handle chapter selection
   const handleChapterClick = (chapter: EpubChapter) => {
     setSelectedChapter(chapter);
-    setActiveTab("preview");
-  };
-
-  const handleUseChapter = () => {
-    if (selectedChapter && selectedChapter.text) {
-      onSelectChapter(selectedChapter.text, selectedChapter.title);
+    
+    // If the chapter has text already, we can process it immediately
+    if (chapter.text) {
+      const chapterContent = `## ${chapter.title}\n\n${chapter.text}`;
+      onSelectChapter(chapterContent, chapter.title);
     }
   };
-
-  const handleUseAllContent = () => {
-    if (epubData.content) {
-      onUseAllContent(epubData.content);
-    }
-  };
-
+  
   return (
     <Card className="mt-6">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <BookOpenIcon className="h-5 w-5 text-primary" />
-          EPUB Preview: {epubData.title} {epubData.author ? `by ${epubData.author}` : ''}
+      <CardContent className="p-6">
+        <CardTitle className="font-bold text-xl text-gray-800 mb-4 flex items-center">
+          <BookOpen className="h-5 w-5 text-primary mr-2" />
+          EPUB Preview: {epubData.title}
         </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="mb-4">
-            <TabsTrigger value="toc">
-              <ListIcon className="mr-1 h-4 w-4" />
+        
+        {/* Author information */}
+        <div className="mb-4">
+          <span className="text-sm text-gray-500">Author: </span>
+          <span className="text-sm font-medium">{epubData.author || 'Unknown'}</span>
+        </div>
+        
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-2 mb-6 sm:grid-cols-3">
+          <div className="bg-blue-50 p-3 rounded-md border border-blue-100">
+            <div className="text-xs text-blue-500 font-medium">Chapters</div>
+            <div className="text-xl font-bold text-blue-700">{epubData.chapters.length}</div>
+          </div>
+          <div className="bg-green-50 p-3 rounded-md border border-green-100">
+            <div className="text-xs text-green-500 font-medium">Characters</div>
+            <div className="text-xl font-bold text-green-700">
+              {epubData.content ? epubData.content.length.toLocaleString() : 'N/A'}
+            </div>
+          </div>
+          <div className="bg-purple-50 p-3 rounded-md border border-purple-100 col-span-2 sm:col-span-1">
+            <div className="text-xs text-purple-500 font-medium">Format</div>
+            <div className="text-xl font-bold text-purple-700">EPUB</div>
+          </div>
+        </div>
+        
+        {/* Cover image */}
+        {epubData.coverUrl && (
+          <div className="mb-6 flex justify-center">
+            <img 
+              src={epubData.coverUrl} 
+              alt={`Cover for ${epubData.title}`} 
+              className="max-h-64 rounded-md shadow-md border border-gray-200" 
+            />
+          </div>
+        )}
+        
+        {/* Tabs for different views */}
+        <Tabs defaultValue="toc" value={activeTab} onValueChange={setActiveTab} className="mt-4">
+          <TabsList className="w-full grid grid-cols-2">
+            <TabsTrigger value="toc" className="flex items-center">
+              <List className="mr-2 h-4 w-4" />
               Table of Contents
             </TabsTrigger>
-            <TabsTrigger value="preview">
-              <BookOpenIcon className="mr-1 h-4 w-4" />
-              Chapter Preview
+            <TabsTrigger value="content" className="flex items-center">
+              <FileText className="mr-2 h-4 w-4" />
+              Preview
             </TabsTrigger>
           </TabsList>
           
-          <TabsContent value="toc" className="mt-0">
-            <div className="flex flex-col gap-4">
-              <ScrollArea className="h-[300px] rounded-md border p-4">
+          {/* Table of Contents Tab */}
+          <TabsContent value="toc" className="pt-4">
+            <ScrollArea className="h-60 rounded-md border p-4">
+              <div className="space-y-1">
                 {epubData.chapters.map((chapter, index) => (
                   <div 
-                    key={`${chapter.id}-${index}`} 
+                    key={chapter.id || index}
                     className={`
-                      py-2 px-3 rounded-md cursor-pointer mb-1
-                      ${selectedChapter?.id === chapter.id ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-gray-100'}
-                      ${chapter.level > 0 ? `ml-${chapter.level * 4}` : ''}
+                      p-2 rounded-md cursor-pointer transition-colors
+                      ${selectedChapter?.id === chapter.id 
+                        ? 'bg-primary text-white' 
+                        : 'hover:bg-gray-100'
+                      }
                     `}
+                    style={{ 
+                      marginLeft: `${chapter.level * 0.5}rem` 
+                    }}
                     onClick={() => handleChapterClick(chapter)}
                   >
-                    <div className="flex items-center gap-2">
-                      <ChevronRightIcon className="h-4 w-4" />
-                      <span className="flex-1 truncate">{chapter.title}</span>
+                    <div className="flex items-center">
+                      <ChevronRight className="h-4 w-4 mr-1 flex-shrink-0" />
+                      <span className="text-sm truncate">{chapter.title}</span>
                     </div>
                   </div>
                 ))}
-              </ScrollArea>
-              
-              <div className="flex justify-between mt-2">
-                <Button variant="outline" onClick={handleUseAllContent}>
-                  Use All Content
-                </Button>
-                <div className="text-xs text-gray-500">
-                  {epubData.chapters.length} chapters detected
-                </div>
               </div>
+            </ScrollArea>
+            
+            <div className="mt-4 flex justify-between">
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="text-xs"
+                onClick={() => setActiveTab('content')}
+              >
+                Preview Selected Chapter
+              </Button>
+              
+              <Button 
+                variant="default" 
+                size="sm"
+                className="text-xs"
+                onClick={processAllContent}
+              >
+                Use Entire Book
+              </Button>
             </div>
           </TabsContent>
           
-          <TabsContent value="preview" className="mt-0">
-            <div className="flex flex-col gap-4">
-              <div className="py-2 px-4 bg-primary/5 rounded-md">
-                <h3 className="font-medium text-primary">{selectedChapter?.title || 'Select a chapter'}</h3>
-              </div>
-              
-              <ScrollArea className="h-[250px] rounded-md border p-4">
-                {selectedChapter ? (
-                  <div className="prose prose-sm">
-                    {(selectedChapter.text || 'No content available for this chapter')
-                      .split('\n')
-                      .map((paragraph, i) => 
-                        paragraph.trim() ? <p key={i}>{paragraph}</p> : null
-                      )}
+          {/* Content Preview Tab */}
+          <TabsContent value="content" className="pt-4 relative">
+            {selectedChapter ? (
+              <>
+                <div className="bg-blue-50 p-2 rounded-md mb-3 border border-blue-100">
+                  <h3 className="font-medium text-blue-700">{selectedChapter.title}</h3>
+                </div>
+                
+                <ScrollArea className="h-60 rounded-md border p-4">
+                  <div className="prose prose-sm max-w-none">
+                    <p>{selectedChapter.text || 'Loading chapter content...'}</p>
                   </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    Select a chapter from the Table of Contents
-                  </div>
-                )}
-              </ScrollArea>
-              
-              <div className="flex justify-end mt-2">
+                </ScrollArea>
+                
+                <div className="mt-4 flex justify-between">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setActiveTab('toc')}
+                  >
+                    Back to Contents
+                  </Button>
+                  
+                  {selectedChapter.text && (
+                    <Button 
+                      variant="default" 
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => {
+                        const chapterContent = `## ${selectedChapter.title}\n\n${selectedChapter.text}`;
+                        onSelectChapter(chapterContent, selectedChapter.title);
+                      }}
+                    >
+                      Use This Chapter
+                    </Button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="text-center p-10 bg-gray-50 rounded-md border border-gray-200">
+                <BookOpen className="h-10 w-10 mx-auto text-gray-400 mb-2" />
+                <p className="text-gray-500">Select a chapter from the Table of Contents to preview it here.</p>
                 <Button 
-                  onClick={handleUseChapter}
-                  disabled={!selectedChapter}
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-4"
+                  onClick={() => setActiveTab('toc')}
                 >
-                  Use This Chapter
+                  View Table of Contents
                 </Button>
               </div>
-            </div>
+            )}
           </TabsContent>
         </Tabs>
       </CardContent>
