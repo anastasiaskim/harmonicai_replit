@@ -112,10 +112,16 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
       }
       
       const data = await response.json();
+      
+      // Ensure data has the wasChunked property or set default based on chapter count
+      if (typeof data.wasChunked !== 'boolean') {
+        data.wasChunked = data.chapters && data.chapters.length > 1;
+      }
+      
       onTextProcessed(data);
       
-      // Check if chapters were detected successfully 
-      const chaptersDetected = data.chapters?.length > 1;
+      // Use the wasChunked property from the API response
+      const chaptersDetected = data.wasChunked;
       
       if (chaptersDetected) {
         toast({
