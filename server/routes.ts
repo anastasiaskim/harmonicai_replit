@@ -322,11 +322,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/detect-chapters", async (req: Request, res: Response) => {
     try {
       console.log("Received AI chapter detection request");
+      
+      // Ensure we have a request body
+      if (!req.body || typeof req.body !== 'object') {
+        return res.status(400).json({ 
+          error: "Invalid request body", 
+          chapters: [{ title: "Chapter 1", text: "" }],
+          wasChunked: false,
+          aiDetection: false
+        });
+      }
+      
       const { text, useAI = true } = req.body;
+      
+      // Additional validation for text
+      if (!text || typeof text !== 'string' || text.trim().length === 0) {
+        return res.status(400).json({ 
+          error: "Text content is required", 
+          chapters: [{ title: "Chapter 1", text: "" }],
+          wasChunked: false,
+          aiDetection: false
+        });
+      }
       
       // Validate request using our schema
       try {
-        const validatedData = chapterDetectionSchema.parse({ text, useAI });
+        const validatedData = chapterDetectionSchema.parse({ 
+          text: text.trim(), 
+          useAI 
+        });
         
         // Use the AI-powered chapter detection use case
         console.log("Calling AI-powered chapter detection use case");

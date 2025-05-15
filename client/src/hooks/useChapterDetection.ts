@@ -42,7 +42,13 @@ export function useChapterDetection() {
       // Call API to detect chapters
       const response = await apiRequest('/api/detect-chapters', {
         method: 'POST',
-        body: JSON.stringify({ text, useAI }),
+        body: JSON.stringify({ 
+          text: text.trim(), 
+          useAI 
+        }),
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
       
       // Parse response as ChunkingResult (apiRequest already converts to JSON)

@@ -63,29 +63,66 @@ export function TextUploadSection({
     try {
       // Read file contents
       const text = await readFileAsText(file);
+      
+      // Check if the text is too long
+      if (text.length > 100000) { // 100K characters limit 
+        toast({
+          title: 'Text Too Long',
+          description: 'The text content is too large. Please use a smaller file (max 100,000 characters).',
+          variant: 'destructive'
+        });
+        return;
+      }
+      
       setTextContent(text);
       
       // Notify parent about the uploaded text
       onTextLoaded(text, file.name);
       
       // Attempt to detect chapters
+      toast({
+        title: 'Detecting Chapters',
+        description: 'Analyzing text to detect chapters...',
+      });
+      
       const result = await detectChapters(text, true);
       
       if (result) {
         onChaptersDetected(result);
+        
+        toast({
+          title: 'File Processed',
+          description: `${result.chapters.length} ${result.chapters.length === 1 ? 'chapter' : 'chapters'} detected. Text content loaded successfully.`,
+        });
+      }
+    } catch (error) {
+      console.error('Error processing file:', error);
+      
+      // More descriptive error message
+      let errorMessage = 'Failed to process the file. Please try again.';
+      
+      if (error instanceof Error) {
+        // Provide more specific error messages based on the error type
+        if (error.message.includes('chapter')) {
+          errorMessage = 'Could not detect chapters in the text. Please try a different file.';
+        } else if (error.message.includes('read')) {
+          errorMessage = 'Could not read the file. The file might be corrupted or in an unsupported format.';
+        }
       }
       
       toast({
-        title: 'File Uploaded',
-        description: 'Text content loaded successfully',
-      });
-    } catch (error) {
-      console.error('Error processing file:', error);
-      toast({
         title: 'Error',
-        description: 'Failed to process the file. Please try again.',
+        description: errorMessage,
         variant: 'destructive'
       });
+      
+      // Still allow the text to be used - create a basic single chapter
+      const basicResult = {
+        chapters: [{ title: "Chapter 1", text: textContent }],
+        wasChunked: false,
+        aiDetection: false
+      };
+      onChaptersDetected(basicResult);
     } finally {
       setIsLoading(false);
     }
