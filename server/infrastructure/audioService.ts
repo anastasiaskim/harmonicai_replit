@@ -131,11 +131,16 @@ class AudioService {
   async updateVoiceAnalytics(voiceId: string): Promise<void> {
     const analytics = await storage.getAnalytics();
     if (analytics) {
-      const voiceUsage = { ...analytics.voiceUsage };
+      // Create a safe copy of voice usage
+      const voiceUsageData = analytics.voiceUsage as Record<string, number>;
+      const voiceUsage = { ...voiceUsageData };
       voiceUsage[voiceId] = (voiceUsage[voiceId] || 0) + 1;
       
+      // Safely get the current conversions count
+      const conversions = analytics.conversions || 0;
+      
       await storage.updateAnalytics({
-        conversions: analytics.conversions + 1,
+        conversions: conversions + 1,
         voiceUsage
       });
     }

@@ -10,7 +10,7 @@ import { TextToSpeechRequest, Voice } from '@shared/schema';
 
 // Interface for file upload input
 export interface ProcessTextInput {
-  file?: Express.Multer.File;
+  file?: any; // Multer file
   directText?: string;
 }
 
