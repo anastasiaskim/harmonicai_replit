@@ -23,6 +23,16 @@ type FileMetadata = {
   mimeType: string;
 };
 
+interface Voice {
+  id: number;
+  voiceId: string;
+  name: string;
+  description: string;
+  gender?: string;
+  accent?: string;
+  style?: string;
+}
+
 type GeneratedChapter = {
   id: number;
   title: string;
@@ -141,7 +151,7 @@ const Home = () => {
             <FileUploadSection onTextProcessed={handleTextProcessed} />
             
             <VoiceSelectionSection 
-              voices={voices || []} 
+              voices={(voices as Voice[]) || []} 
               isLoading={isLoadingVoices}
               selectedVoice={selectedVoice}
               onVoiceSelect={handleVoiceSelect}
