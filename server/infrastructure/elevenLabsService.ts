@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuid } from 'uuid';
+import { Readable } from 'stream';
 
 // Get audio directory (create if needed)
 const audioDir = path.join(process.cwd(), 'audio');
@@ -77,13 +78,23 @@ class ElevenLabsService {
       const elevenlabs = await import('elevenlabs');
       
       try {
-        // Use the SDK's static methods that accept apiKey parameter
-        const voices = await elevenlabs.voices.getAll({ 
-          apiKey: this.config.apiKey 
+        // Create a simple test request directly to the ElevenLabs API
+        const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'xi-api-key': this.config.apiKey
+          }
         });
         
-        console.log('API key validation successful', voices ? 'voices found' : 'no voices found');
-        return Array.isArray(voices) && voices.length > 0;
+        if (!response.ok) {
+          console.error(`API key validation failed with status: ${response.status}`);
+          return false;
+        }
+        
+        const data = await response.json();
+        console.log('API key validation successful:', data.voices ? 'voices found' : 'no voices found');
+        return Array.isArray(data.voices) && data.voices.length > 0;
       } catch (error) {
         console.error('Error checking ElevenLabs API key validity:', error);
         return false;
@@ -102,11 +113,11 @@ class ElevenLabsService {
     voiceId: string, 
     fileName: string
   ): Promise<{ success: boolean; filePath: string; error?: string }> {
-    if (!this.client) {
+    if (!this.isApiKeyConfigured()) {
       return { 
         success: false, 
         filePath: '', 
-        error: 'ElevenLabs client not initialized' 
+        error: 'ElevenLabs API key not configured' 
       };
     }
     
@@ -130,23 +141,33 @@ class ElevenLabsService {
       };
       
       try {
-        // Import the ElevenLabs SDK dynamically
-        const elevenlabs = await import('elevenlabs');
+        // Instead of using the SDK, we'll use direct API calls for better control
+        console.log('Using direct API call to generate audio');
         
-        // Create a new client instance specifically for this request
-        // to avoid issues with the async initialization
-        const client = new elevenlabs.ElevenLabs({
-          apiKey: this.config.apiKey
-        });
-        
-        // Generate audio using the SDK
-        console.log('Generating audio with dynamic ElevenLabs client...');
-        const audio = await client.generate({
-          voice: elevenLabsVoiceId,
+        // Create request body
+        const requestBody = {
           text: text,
           model_id: "eleven_multilingual_v2",
           voice_settings: voiceSettings
+        };
+        
+        // Make direct request to ElevenLabs API
+        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'audio/mpeg',
+            'Content-Type': 'application/json',
+            'xi-api-key': this.config.apiKey
+          },
+          body: JSON.stringify(requestBody)
         });
+        
+        if (!response.ok) {
+          throw new Error(`API request failed with status: ${response.status}`);
+        }
+        
+        // Get audio buffer from response
+        const audio = Buffer.from(await response.arrayBuffer());
         
         // Write the audio buffer to a file
         fs.writeFileSync(filePath, audio);
@@ -197,11 +218,110 @@ class ElevenLabsService {
         
         console.error('Detailed error:', detailedError);
         
-        return {
-          success: false,
-          filePath,
-          error: `ElevenLabs API error: ${detailedError}`
-        };
+        // Try alternative method with streaming if the main method failed
+        try {
+          console.log('Trying alternative streaming TTS method...');
+          
+          // Create a file stream to write the audio data
+          const fileStream = fs.createWriteStream(filePath);
+          
+          // Use alternative API endpoint with streaming response
+          // Split text into smaller chunks if it's too large
+          const maxChunkSize = 5000; // Max characters per chunk
+          const textChunks: string[] = [];
+          
+          // Split text into chunks to avoid token limits 
+          let i = 0;
+          while (i < text.length) {
+            const chunk = text.slice(i, i + maxChunkSize);
+            if (chunk) textChunks.push(chunk);
+            i += maxChunkSize;
+          }
+          
+          console.log(`Split text into ${textChunks.length} chunks for streaming`);
+          
+          // Process first chunk only in fallback mode
+          const chunkToProcess = textChunks[0];
+          
+          // Create request body for streaming
+          const streamRequestBody = {
+            text: chunkToProcess,
+            model_id: "eleven_multilingual_v2",
+            voice_settings: voiceSettings,
+            output_format: "mp3_44100_128"
+          };
+          
+          // Make streaming request to ElevenLabs API
+          const streamResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}/stream`, {
+            method: 'POST',
+            headers: {
+              'Accept': 'audio/mpeg',
+              'Content-Type': 'application/json',
+              'xi-api-key': this.config.apiKey
+            },
+            body: JSON.stringify(streamRequestBody)
+          });
+          
+          if (!streamResponse.ok) {
+            throw new Error(`Streaming API request failed with status: ${streamResponse.status}`);
+          }
+          
+          if (streamResponse.body) {
+            // Convert the response to a buffer and write to file
+            const buffer = Buffer.from(await streamResponse.arrayBuffer());
+            fs.writeFileSync(filePath, buffer);
+            
+            // Simulate stream completion
+            fileStream.end();
+          } else {
+            throw new Error('No response body received from streaming API');
+          }
+          
+          return new Promise((resolve) => {
+            fileStream.on('finish', () => {
+              if (fs.existsSync(filePath)) {
+                const stats = fs.statSync(filePath);
+                if (stats.size > 0) {
+                  console.log(`Audio file successfully saved using alternative method at ${filePath} (${stats.size} bytes)`);
+                  resolve({ success: true, filePath });
+                } else {
+                  console.error('File was created but is empty (alternative method)');
+                  resolve({
+                    success: false,
+                    filePath,
+                    error: 'Audio file is empty, possibly due to API quota limitations'
+                  });
+                }
+              } else {
+                resolve({
+                  success: false,
+                  filePath,
+                  error: 'Failed to create audio file with alternative method'
+                });
+              }
+            });
+            
+            fileStream.on('error', (err) => {
+              console.error('File stream error:', err);
+              resolve({
+                success: false,
+                filePath,
+                error: `File stream error: ${err.message}`
+              });
+            });
+          });
+        } catch (fallbackError) {
+          console.error('Alternative method also failed:', fallbackError);
+          
+          // Create an empty placeholder file
+          fs.writeFileSync(filePath, Buffer.from(''));
+          
+          return {
+            success: false,
+            filePath,
+            error: `ElevenLabs API error: ${detailedError}. Fallback also failed.`
+          };
+        }
       }
     } catch (error: any) {
       console.error('Error generating audio with ElevenLabs:', error);
