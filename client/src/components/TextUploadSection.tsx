@@ -37,13 +37,13 @@ export function TextUploadSection({
         return;
       }
       
-      if (selectedFile.size > 10 * 1024 * 1024) { // 10MB limit
+      // Notify user when processing large files (but still allow them)
+      if (selectedFile.size > 20 * 1024 * 1024) { // 20MB warning threshold
         toast({
-          title: 'File Too Large',
-          description: 'Please upload a file smaller than 10MB',
-          variant: 'destructive'
+          title: 'Large File',
+          description: 'Processing may take longer for files this size.',
+          variant: 'default'
         });
-        return;
       }
       
       setFile(selectedFile);
@@ -63,16 +63,6 @@ export function TextUploadSection({
     try {
       // Read file contents
       const text = await readFileAsText(file);
-      
-      // Check if the text is too long
-      if (text.length > 100000) { // 100K characters limit 
-        toast({
-          title: 'Text Too Long',
-          description: 'The text content is too large. Please use a smaller file (max 100,000 characters).',
-          variant: 'destructive'
-        });
-        return;
-      }
       
       setTextContent(text);
       
