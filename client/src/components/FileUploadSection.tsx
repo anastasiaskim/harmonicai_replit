@@ -176,9 +176,18 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
                     TXT
                   </Badge>
                 </div>
-                {isProcessing && (
-                  <p className="text-xs text-primary animate-pulse mt-2">
-                    Processing your file...
+                {isProcessing ? (
+                  <div className="mt-2">
+                    <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+                      <div className="bg-primary h-1.5 rounded-full animate-pulse" style={{ width: '70%' }}></div>
+                    </div>
+                    <p className="text-xs text-primary mt-1">
+                      <span className="font-medium">Processing file...</span> Detecting chapters and analyzing text
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-green-600 mt-2">
+                    <span className="font-medium">Processing complete!</span> Text has been chunked into chapters
                   </p>
                 )}
               </div>
@@ -202,13 +211,18 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
           onDrop={handleDrop}
         >
           <FileText className="h-10 w-10 mx-auto text-gray-400" />
-          <p className="mt-2 text-gray-600">
+          <p className="mt-2 text-gray-600 font-medium">
             {selectedFile && !error
               ? 'Upload a different file'
-              : 'Drag & drop your file here or click to browse'
+              : 'Drag & drop your text file here or click to browse'
             }
           </p>
-          <p className="text-xs text-gray-400 mt-1">Supported format: .txt only (Max 5MB)</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Your file will be automatically chunked into chapters
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            Supported format: .txt only (Max 5MB)
+          </p>
           <input 
             type="file" 
             ref={fileInputRef}
