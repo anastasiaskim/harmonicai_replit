@@ -1,14 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Music, Volume2 } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Music, Volume2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Card } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface Chapter {
   id: number;
   title: string;
   audioUrl: string;
   duration: number; // in seconds
+  size?: number; // in bytes
 }
 
 interface GlobalAudioPlayerProps {
@@ -21,6 +23,8 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [volume, setVolume] = useState(80);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [emptyAudioFile, setEmptyAudioFile] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Get current chapter
@@ -30,6 +34,18 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
   useEffect(() => {
     if (!currentChapter) return;
     
+    // Reset error states when changing chapters
+    setErrorMessage(null);
+    setEmptyAudioFile(false);
+    
+    // Check if this is an empty audio file (size 0 bytes)
+    if (currentChapter.size !== undefined && currentChapter.size === 0) {
+      setEmptyAudioFile(true);
+      setIsLoading(false);
+      setErrorMessage("This audio file is empty. It may have failed to generate due to API limitations.");
+      return; // Don't try to load the audio if we know it's empty
+    }
+    
     // Function declarations for event handlers
     const handleTimeUpdate = (event: Event) => {
       const audio = event.target as HTMLAudioElement;
@@ -38,11 +54,17 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
     
     const handleLoadedData = () => {
       setIsLoading(false);
+      // If the duration is 0, it's likely an empty or corrupted file
+      if (audioRef.current && audioRef.current.duration === 0) {
+        setEmptyAudioFile(true);
+        setErrorMessage("Audio file appears to be empty or corrupted.");
+      }
     };
     
     const handleLoadError = (error: Event) => {
       console.error('Error loading audio file:', error);
       setIsLoading(false);
+      setErrorMessage("Failed to load audio file. The file may be missing or corrupted.");
     };
     
     const handleEnded = () => {
@@ -64,31 +86,38 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
       audioRef.current.removeEventListener('ended', handleEnded);
     }
     
-    // Create new audio element
-    audioRef.current = new Audio(currentChapter.audioUrl);
-    const audio = audioRef.current;
-    
-    // Set volume
-    audio.volume = volume / 100;
-    
-    // Initialize state
-    setIsLoading(true);
-    setCurrentTime(0);
-    setIsPlaying(false);
-    
-    // Add event listeners
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('loadeddata', handleLoadedData);
-    audio.addEventListener('error', handleLoadError);
-    audio.addEventListener('ended', handleEnded);
-    
-    return () => {
-      audio.pause();
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('loadeddata', handleLoadedData);
-      audio.removeEventListener('error', handleLoadError);
-      audio.removeEventListener('ended', handleEnded);
-    };
+    try {
+      // Create new audio element
+      audioRef.current = new Audio(currentChapter.audioUrl);
+      const audio = audioRef.current;
+      
+      // Set volume
+      audio.volume = volume / 100;
+      
+      // Initialize state
+      setIsLoading(true);
+      setCurrentTime(0);
+      setIsPlaying(false);
+      
+      // Add event listeners
+      audio.addEventListener('timeupdate', handleTimeUpdate);
+      audio.addEventListener('loadeddata', handleLoadedData);
+      audio.addEventListener('error', handleLoadError);
+      audio.addEventListener('ended', handleEnded);
+      
+      return () => {
+        audio.pause();
+        audio.removeEventListener('timeupdate', handleTimeUpdate);
+        audio.removeEventListener('loadeddata', handleLoadedData);
+        audio.removeEventListener('error', handleLoadError);
+        audio.removeEventListener('ended', handleEnded);
+      };
+    } catch (err) {
+      console.error('Error creating audio element:', err);
+      setIsLoading(false);
+      setErrorMessage("Failed to create audio player. Please check console for details.");
+      return undefined;
+    }
   }, [currentChapter, currentChapterIndex, chapters.length, volume]);
 
   // Toggle play/pause
@@ -162,6 +191,24 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
   return (
     <Card className="audio-player p-4 bg-gradient-to-r from-indigo-50 to-sky-50 border-indigo-100">
       <div className="flex flex-col space-y-3">
+        {/* Error message display */}
+        {errorMessage && (
+          <Alert variant="destructive" className="mb-2">
+            <AlertCircle className="h-4 w-4 mr-2" />
+            <AlertDescription>{errorMessage}</AlertDescription>
+          </Alert>
+        )}
+        
+        {/* Empty audio file warning */}
+        {emptyAudioFile && !errorMessage && (
+          <Alert variant="warning" className="mb-2 bg-amber-50 border-amber-200">
+            <AlertCircle className="h-4 w-4 mr-2 text-amber-500" />
+            <AlertDescription>
+              This audio file is empty due to API quota limitations. Please check your ElevenLabs API key and quota.
+            </AlertDescription>
+          </Alert>
+        )}
+        
         {/* Chapter title and navigation */}
         <div className="flex items-center justify-between">
           <div className="flex-1 overflow-hidden">
@@ -182,7 +229,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
             max={currentChapter?.duration || 100}
             step={0.1}
             onValueChange={handleSeek}
-            disabled={isLoading || !currentChapter}
+            disabled={isLoading || !currentChapter || emptyAudioFile || !!errorMessage}
             className="h-1.5"
           />
           <div className="flex justify-between text-xs text-gray-500 mt-1">
@@ -199,7 +246,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
               size="icon"
               className="text-gray-600 hover:text-primary hover:bg-primary/10 rounded-full w-8 h-8"
               onClick={playPreviousChapter}
-              disabled={isLoading || chapters.length <= 1}
+              disabled={isLoading || chapters.length <= 1 || emptyAudioFile || !!errorMessage}
             >
               <SkipBack className="h-4 w-4" />
             </Button>
@@ -209,7 +256,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
               size="icon"
               className="bg-primary hover:bg-primary/90 text-white rounded-full w-10 h-10 flex items-center justify-center"
               onClick={togglePlayback}
-              disabled={isLoading || !currentChapter}
+              disabled={isLoading || !currentChapter || emptyAudioFile || !!errorMessage}
             >
               {isPlaying ? (
                 <Pause className="h-5 w-5" />
@@ -223,7 +270,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
               size="icon"
               className="text-gray-600 hover:text-primary hover:bg-primary/10 rounded-full w-8 h-8"
               onClick={playNextChapter}
-              disabled={isLoading || currentChapterIndex >= chapters.length - 1}
+              disabled={isLoading || currentChapterIndex >= chapters.length - 1 || emptyAudioFile || !!errorMessage}
             >
               <SkipForward className="h-4 w-4" />
             </Button>
