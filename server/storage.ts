@@ -3,8 +3,6 @@ import {
   analytics, type Analytics, type InsertAnalytics,
   chapters, type Chapter, type InsertChapter
 } from "@shared/schema";
-import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
   // Voice operations
@@ -24,134 +22,125 @@ export interface IStorage {
   insertChapters(chapters: InsertChapter[]): Promise<Chapter[]>;
 }
 
-export class DatabaseStorage implements IStorage {
+export class MemStorage implements IStorage {
+  private voicesData: Map<number, Voice>;
+  private analyticsData: Analytics | undefined;
+  private chaptersData: Map<number, Chapter>;
+  private voiceIdCounter: number;
+  private analyticsIdCounter: number;
+  private chapterIdCounter: number;
+
   constructor() {
-    // Initialize default voices and analytics if they don't exist
-    this.initializeDefaults();
-  }
-
-  private async initializeDefaults() {
-    // Check if voices exist
-    const existingVoices = await db.select().from(voices);
-    if (existingVoices.length === 0) {
-      // Add default voices
-      await db.insert(voices).values([
-        {
-          voiceId: "rachel",
-          name: "Rachel",
-          description: "Warm, natural female voice with clear enunciation"
-        },
-        {
-          voiceId: "thomas",
-          name: "Thomas",
-          description: "Deep, authoritative male voice for non-fiction"
-        },
-        {
-          voiceId: "emily",
-          name: "Emily",
-          description: "Soft, expressive voice ideal for fiction"
-        },
-        {
-          voiceId: "james",
-          name: "James",
-          description: "British accent with rich tone for narratives"
-        }
-      ]);
-    }
-
-    // Check if analytics exist
-    const existingAnalytics = await db.select().from(analytics);
-    if (existingAnalytics.length === 0) {
-      // Initialize analytics
-      await db.insert(analytics).values({
-        conversions: 0,
-        totalCharacters: 0,
-        fileTypes: { txt: 0, epub: 0, pdf: 0, direct: 0 },
-        voiceUsage: {},
-        createdAt: new Date().toISOString()
-      });
-    }
+    this.voicesData = new Map();
+    this.chaptersData = new Map();
+    this.voiceIdCounter = 1;
+    this.analyticsIdCounter = 1;
+    this.chapterIdCounter = 1;
+    
+    // Initialize with default voices
+    this.insertVoice({
+      voiceId: "rachel",
+      name: "Rachel",
+      description: "Warm, natural female voice with clear enunciation"
+    });
+    
+    this.insertVoice({
+      voiceId: "thomas",
+      name: "Thomas",
+      description: "Deep, authoritative male voice for non-fiction"
+    });
+    
+    this.insertVoice({
+      voiceId: "emily",
+      name: "Emily",
+      description: "Soft, expressive voice ideal for fiction"
+    });
+    
+    this.insertVoice({
+      voiceId: "james",
+      name: "James",
+      description: "British accent with rich tone for narratives"
+    });
+    
+    // Initialize analytics
+    this.updateAnalytics({
+      conversions: 0,
+      totalCharacters: 0,
+      fileTypes: { txt: 0, epub: 0, pdf: 0, direct: 0 },
+      voiceUsage: {},
+      createdAt: new Date().toISOString()
+    });
   }
 
   // Voice operations
   async getVoices(): Promise<Voice[]> {
-    return await db.select().from(voices);
+    return Array.from(this.voicesData.values());
   }
 
   async getVoice(id: number): Promise<Voice | undefined> {
-    const result = await db.select().from(voices).where(eq(voices.id, id));
-    return result[0];
+    return this.voicesData.get(id);
   }
 
   async getVoiceByVoiceId(voiceId: string): Promise<Voice | undefined> {
-    const result = await db.select().from(voices).where(eq(voices.voiceId, voiceId));
-    return result[0];
+    return Array.from(this.voicesData.values()).find(
+      (voice) => voice.voiceId === voiceId
+    );
   }
 
   async insertVoice(voice: InsertVoice): Promise<Voice> {
-    const result = await db.insert(voices).values(voice).returning();
-    return result[0];
+    const id = this.voiceIdCounter++;
+    const newVoice: Voice = { id, ...voice };
+    this.voicesData.set(id, newVoice);
+    return newVoice;
   }
   
   // Analytics operations
   async getAnalytics(): Promise<Analytics | undefined> {
-    const result = await db.select().from(analytics).orderBy(desc(analytics.id)).limit(1);
-    return result[0];
+    return this.analyticsData;
   }
 
   async updateAnalytics(data: Partial<InsertAnalytics>): Promise<Analytics> {
-    const currentAnalytics = await this.getAnalytics();
-    
-    if (!currentAnalytics) {
-      // If no analytics exist, create a new one
-      const result = await db.insert(analytics).values({
+    if (!this.analyticsData) {
+      const id = this.analyticsIdCounter++;
+      this.analyticsData = { 
+        id, 
         conversions: data.conversions || 0,
         totalCharacters: data.totalCharacters || 0,
         fileTypes: data.fileTypes || { txt: 0, epub: 0, pdf: 0, direct: 0 },
         voiceUsage: data.voiceUsage || {},
         createdAt: data.createdAt || new Date().toISOString()
-      }).returning();
-      
-      return result[0];
-    } else {
-      // Update existing analytics
-      const updatedAnalytics = {
-        ...currentAnalytics,
-        conversions: data.conversions !== undefined ? data.conversions : currentAnalytics.conversions,
-        totalCharacters: data.totalCharacters !== undefined ? data.totalCharacters : currentAnalytics.totalCharacters,
-        fileTypes: data.fileTypes || currentAnalytics.fileTypes,
-        voiceUsage: data.voiceUsage ? { ...currentAnalytics.voiceUsage, ...data.voiceUsage } : currentAnalytics.voiceUsage
       };
-      
-      const result = await db.update(analytics)
-        .set(updatedAnalytics)
-        .where(eq(analytics.id, currentAnalytics.id))
-        .returning();
-        
-      return result[0];
+    } else {
+      this.analyticsData = { 
+        ...this.analyticsData,
+        conversions: data.conversions !== undefined ? data.conversions : this.analyticsData.conversions,
+        totalCharacters: data.totalCharacters !== undefined ? data.totalCharacters : this.analyticsData.totalCharacters,
+        fileTypes: data.fileTypes || this.analyticsData.fileTypes,
+        voiceUsage: data.voiceUsage ? { ...this.analyticsData.voiceUsage, ...data.voiceUsage } : this.analyticsData.voiceUsage
+      };
     }
+    return this.analyticsData;
   }
   
   // Chapter operations
   async getChapter(id: number): Promise<Chapter | undefined> {
-    const result = await db.select().from(chapters).where(eq(chapters.id, id));
-    return result[0];
+    return this.chaptersData.get(id);
   }
 
   async getChapters(): Promise<Chapter[]> {
-    return await db.select().from(chapters);
+    return Array.from(this.chaptersData.values());
   }
 
   async insertChapter(chapter: InsertChapter): Promise<Chapter> {
-    const result = await db.insert(chapters).values(chapter).returning();
-    return result[0];
+    const id = this.chapterIdCounter++;
+    const newChapter: Chapter = { id, ...chapter };
+    this.chaptersData.set(id, newChapter);
+    return newChapter;
   }
   
   async insertChapters(chapters: InsertChapter[]): Promise<Chapter[]> {
-    if (chapters.length === 0) return [];
-    const result = await db.insert(chapters).values(chapters).returning();
-    return result;
+    return Promise.all(chapters.map(chapter => this.insertChapter(chapter)));
   }
 }
 
-export const storage = new DatabaseStorage();
+export const storage = new MemStorage();
