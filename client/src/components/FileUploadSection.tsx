@@ -1,8 +1,10 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
-import { Upload, FileType } from 'lucide-react';
-import { Textarea } from '@/components/ui/textarea';
+import { Upload, FileText, AlertCircle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
+import { formatFileSize } from '@/lib/fileHelpers';
 
 interface FileUploadSectionProps {
   onTextProcessed: (
@@ -13,13 +15,19 @@ interface FileUploadSectionProps {
 
 const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }) => {
   const [dragActive, setDragActive] = useState(false);
-  const [textContent, setTextContent] = useState('');
-  const [charCount, setCharCount] = useState(0);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const MAX_CHARS = 50000;
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  
+  // Reset all states
+  const resetState = () => {
+    setSelectedFile(null);
+    setError(null);
+  };
 
   const handleDrag = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -31,30 +39,46 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
     }
   }, []);
 
-  const processFile = useCallback(async (file: File) => {
-    // Check file type
-    const validTypes = ['.txt', '.epub', '.pdf', 'text/plain', 'application/epub+zip', 'application/pdf'];
-    const fileType = file.type || file.name.substring(file.name.lastIndexOf('.'));
+  // Validate file type - only accept .txt for this phase
+  const validateFile = (file: File): boolean => {
+    const validTypes = ['.txt', 'text/plain'];
+    const fileType = file.type || file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
     
     if (!validTypes.some(type => fileType.includes(type))) {
+      setError("Invalid file type. Please upload a TXT file only.");
       toast({
         title: "Invalid file type",
-        description: "Please upload a TXT, EPUB, or PDF file.",
+        description: "Please upload a TXT file only.",
         variant: "destructive",
       });
-      return;
+      return false;
     }
     
     // Check file size
-    if (file.size > 5 * 1024 * 1024) { // 5MB
+    if (file.size > MAX_FILE_SIZE) {
+      setError(`File too large. Maximum file size is ${formatFileSize(MAX_FILE_SIZE)}.`);
       toast({
         title: "File too large",
-        description: "Maximum file size is 5MB.",
+        description: `Maximum file size is ${formatFileSize(MAX_FILE_SIZE)}.`,
         variant: "destructive",
       });
+      return false;
+    }
+    
+    return true;
+  };
+
+  const processFile = useCallback(async (file: File) => {
+    // Reset previous states
+    resetState();
+    
+    // Validate file before processing
+    if (!validateFile(file)) {
       return;
     }
     
+    // Set the selected file for UI display
+    setSelectedFile(file);
     setIsProcessing(true);
     
     try {
@@ -72,8 +96,6 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
       }
       
       const data = await response.json();
-      setTextContent(data.text);
-      setCharCount(data.text.length);
       onTextProcessed(data);
       
       toast({
@@ -81,10 +103,12 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
         description: `${file.name} has been successfully processed.`,
       });
     } catch (err: any) {
-      onTextProcessed(null, err.message || 'Failed to process file');
+      const errorMessage = err.message || 'Failed to process file';
+      setError(errorMessage);
+      onTextProcessed(null, errorMessage);
       toast({
         title: "Error",
-        description: err.message || 'Failed to process file',
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -106,41 +130,12 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
     if (e.target.files && e.target.files[0]) {
       processFile(e.target.files[0]);
     }
-  }, [processFile]);
-
-  const handleTextChange = useCallback(async (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value;
     
-    // Enforce character limit
-    if (text.length <= MAX_CHARS) {
-      setTextContent(text);
-      setCharCount(text.length);
-      
-      if (text.trim().length > 0) {
-        try {
-          const response = await fetch('/api/upload', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ text }),
-          });
-          
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error);
-          }
-          
-          const data = await response.json();
-          onTextProcessed(data);
-        } catch (err: any) {
-          onTextProcessed(null, err.message);
-        }
-      } else {
-        onTextProcessed({ text: '', chapters: [], charCount: 0 });
-      }
+    // Reset file input value so the same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
-  }, [onTextProcessed]);
+  }, [processFile]);
 
   const openFileSelector = () => {
     if (fileInputRef.current) {
@@ -153,11 +148,47 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
       <CardContent className="p-6">
         <CardTitle className="font-bold text-xl text-gray-800 mb-4 flex items-center">
           <Upload className="h-5 w-5 text-primary mr-2" />
-          Upload Your Text
+          Upload Your Text File
         </CardTitle>
         
+        {/* Error alert */}
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        
+        {/* Selected file display */}
+        {selectedFile && !error && (
+          <div className="bg-gray-50 rounded-lg p-4 mb-4 border border-gray-200">
+            <div className="flex items-start">
+              <FileText className="h-10 w-10 text-primary mr-3 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-medium text-gray-800">{selectedFile.name}</h3>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  <Badge variant="outline" className="text-xs">
+                    {formatFileSize(selectedFile.size)}
+                  </Badge>
+                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                    TXT
+                  </Badge>
+                </div>
+                {isProcessing && (
+                  <p className="text-xs text-primary animate-pulse mt-2">
+                    Processing your file...
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* File upload drop zone */}
         <div 
-          className={`border-2 border-dashed rounded-lg p-8 mb-4 text-center cursor-pointer transition-all duration-300 ${
+          className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-300 ${
+            selectedFile && !error ? 'mb-0' : 'mb-4'
+          } ${
             dragActive 
               ? 'border-primary bg-primary/5' 
               : 'border-gray-200 hover:border-primary hover:bg-gray-50'
@@ -168,33 +199,23 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
           onDragLeave={handleDrag}
           onDrop={handleDrop}
         >
-          <FileType className="h-10 w-10 mx-auto text-gray-400" />
-          <p className="mt-2 text-gray-600">Drag & drop your file here or click to browse</p>
-          <p className="text-xs text-gray-400 mt-1">Supported formats: .txt, .epub, .pdf (Max 5MB)</p>
+          <FileText className="h-10 w-10 mx-auto text-gray-400" />
+          <p className="mt-2 text-gray-600">
+            {selectedFile && !error
+              ? 'Upload a different file'
+              : 'Drag & drop your file here or click to browse'
+            }
+          </p>
+          <p className="text-xs text-gray-400 mt-1">Supported format: .txt only (Max 5MB)</p>
           <input 
             type="file" 
             ref={fileInputRef}
             className="hidden" 
-            accept=".txt,.epub,.pdf" 
+            accept=".txt" 
             onChange={handleFileChange}
             disabled={isProcessing}
           />
         </div>
-        
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="font-medium text-gray-700">Or paste text directly:</h3>
-          <span className={`text-xs ${charCount > MAX_CHARS ? 'text-red-500' : 'text-gray-400'}`}>
-            {charCount}/{MAX_CHARS} characters
-          </span>
-        </div>
-        
-        <Textarea 
-          className="h-32 font-serif"
-          placeholder="Paste your text here..."
-          value={textContent}
-          onChange={handleTextChange}
-          disabled={isProcessing}
-        />
       </CardContent>
     </Card>
   );

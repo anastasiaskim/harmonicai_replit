@@ -16,29 +16,19 @@ export interface FileProcessingResult {
 class FileService {
   /**
    * Process an uploaded file and extract its content
+   * For Phase 2, we only support .txt files
    */
   processFile(file: any): FileProcessingResult {
     const { originalname, buffer, mimetype } = file;
-    let text = '';
-    let fileType = '';
     
-    // Determine file type and extract content
-    if (mimetype === "text/plain" || originalname.endsWith(".txt")) {
-      text = buffer.toString("utf-8");
-      fileType = "txt";
-    } else if (mimetype === "application/pdf" || originalname.endsWith(".pdf")) {
-      // For MVP, we just pretend to parse PDF but return the plain text
-      text = `${originalname} content. In the production app, this would be the parsed PDF content.`;
-      fileType = "pdf";
-    } else if (mimetype === "application/epub+zip" || originalname.endsWith(".epub")) {
-      // For MVP, we just pretend to parse EPUB but return the plain text
-      text = `${originalname} content. In the production app, this would be the parsed EPUB content.`;
-      fileType = "epub";
+    // For Phase 2, we only support .txt files
+    if (mimetype === "text/plain" || originalname.toLowerCase().endsWith(".txt")) {
+      const text = buffer.toString("utf-8");
+      const fileType = "txt";
+      return { text, fileType };
     } else {
-      throw new Error("Invalid file type. Only TXT, EPUB, and PDF are supported.");
+      throw new Error("Invalid file type. Only TXT files are supported.");
     }
-    
-    return { text, fileType };
   }
   
   /**
