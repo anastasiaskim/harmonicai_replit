@@ -1,10 +1,11 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import * as fs from 'fs';
 import * as path from 'path';
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
+import JSZip from "jszip";
 
 // Import domain layer
 import { textToSpeechSchema } from "@shared/schema";
@@ -274,6 +275,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // Server-side chapter ZIP creation and download
+  app.post("/api/download", async (req: Request, res: Response) => {
+    try {
+      console.log("Received chapter download request");
+      const { text, bookTitle = "Untitled Book" } = req.body;
+      
+      // Validate request
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: "Text content is required" });
+      }
+      
+      // Detect chapters in the text
+      const chapters = chapterService.detectChapters(text);
+      console.log(`Detected ${chapters.length} chapters in the text`);
+      
+      if (chapters.length === 0) {
+        return res.status(400).json({ error: "No chapters could be detected in the text" });
+      }
+      
+      // Create a ZIP archive in memory
+      console.log("Creating ZIP archive...");
+      const zip = new JSZip();
+      
+      // Helper function to create a safe filename
+      const safeFileName = (title: string): string => {
+        const cleanTitle = title
+          .replace(/[^a-z0-9]/gi, '_')
+          .replace(/_+/g, '_')
+          .toLowerCase()
+          .trim();
+        return cleanTitle.substring(0, 50);
+      };
+      
+      // Create a table of contents file
+      let tocContent = `${bookTitle}\nTable of Contents\n\n`;
+      chapters.forEach((chapter: { title: string; text: string }, index: number) => {
+        tocContent += `${index + 1}. ${chapter.title}\n`;
+      });
+      zip.file("00_table_of_contents.txt", tocContent);
+      
+      // Add each chapter as a separate text file
+      chapters.forEach((chapter: { title: string; text: string }, index: number) => {
+        // Create a safe filename with numeric prefix for ordering
+        const fileName = `${String(index + 1).padStart(2, '0')}_${safeFileName(chapter.title)}.txt`;
+        
+        // Format chapter content with proper headers
+        let content = `${chapter.title}\n`;
+        content += '='.repeat(chapter.title.length) + '\n\n';
+        content += chapter.text;
+        
+        // Add file to the ZIP archive
+        zip.file(fileName, content);
+      });
+      
+      // Generate the ZIP file as a buffer
+      console.log("Generating ZIP file...");
+      const zipBuffer = await zip.generateAsync({
+        type: "nodebuffer",
+        compression: "DEFLATE",
+        compressionOptions: {
+          level: 6
+        }
+      });
+      
+      // Set response headers for file download
+      const zipFileName = `${safeFileName(bookTitle)}_chapters.zip`;
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename=${zipFileName}`);
+      res.setHeader('Content-Length', zipBuffer.length);
+      
+      // Send the ZIP file to the client
+      console.log(`Sending ZIP file: ${zipFileName} (${zipBuffer.length} bytes)`);
+      res.send(zipBuffer);
+    } catch (error) {
+      console.error("Error creating chapter ZIP:", error);
+      if (error instanceof Error) {
+        return res.status(500).json({ error: error.message });
+      }
+      return res.status(500).json({ error: "Failed to create chapter files" });
+    }
+  });
+  
   // Get analytics
   app.get("/api/analytics", async (_req: Request, res: Response) => {
     try {

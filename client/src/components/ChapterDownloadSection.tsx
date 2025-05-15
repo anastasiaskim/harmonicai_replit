@@ -69,8 +69,82 @@ const ChapterDownloadSection: React.FC<ChapterDownloadSectionProps> = ({
     }
   };
 
-  // Download all chapters as a zip file
-  const downloadAllChapters = async () => {
+  // Calculate total text size
+  const totalTextSize = React.useMemo(() => {
+    return chapters.reduce((total, chapter) => total + chapter.text.length, 0);
+  }, [chapters]);
+  
+  // Determine if we should use server-side processing
+  // For large documents (>500KB), use server-side processing to avoid browser memory issues
+  const shouldUseServerSide = React.useMemo(() => {
+    return totalTextSize > 500000 || chapters.length > 50;
+  }, [totalTextSize, chapters.length]);
+  
+  // Server-side ZIP creation and download
+  const serverSideDownload = async () => {
+    if (chapters.length === 0) return;
+
+    setIsDownloading(true);
+    setDownloadSuccess(false);
+    
+    try {
+      // Combine all chapter text to send to the server
+      const fullText = chapters.map(ch => ch.text).join('\n\n');
+      
+      toast({
+        title: "Processing Chapters",
+        description: `Sending ${(fullText.length / 1024).toFixed(1)}KB to server for processing...`,
+      });
+      
+      // Make a POST request to the server-side endpoint
+      const response = await fetch('/api/download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: fullText,
+          bookTitle
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create ZIP file on server');
+      }
+      
+      // Get the ZIP file as a blob
+      const blob = await response.blob();
+      
+      // Create a safe filename
+      const zipFileName = `${safeFileName(bookTitle)}_chapters.zip`;
+      
+      // Download the file using file-saver
+      saveAs(blob, zipFileName);
+      
+      setDownloadSuccess(true);
+      toast({
+        title: "Download Complete",
+        description: `All ${chapters.length} chapters have been saved as ${zipFileName}`,
+      });
+    } catch (error) {
+      console.error('Error during server-side download:', error);
+      toast({
+        title: "Download Failed",
+        description: error instanceof Error ? error.message : "Server failed to create the ZIP file",
+        variant: "destructive"
+      });
+    } finally {
+      setIsDownloading(false);
+      // Reset success state after a delay
+      if (downloadSuccess) {
+        setTimeout(() => setDownloadSuccess(false), 3000);
+      }
+    }
+  };
+  
+  // Client-side ZIP creation and download
+  const clientSideDownload = async () => {
     if (chapters.length === 0) return;
 
     setIsDownloading(true);
@@ -138,6 +212,15 @@ const ChapterDownloadSection: React.FC<ChapterDownloadSectionProps> = ({
       }
     }
   };
+  
+  // Combined download function that chooses the appropriate method
+  const downloadAllChapters = async () => {
+    if (shouldUseServerSide) {
+      await serverSideDownload();
+    } else {
+      await clientSideDownload();
+    }
+  };
 
   // If there are no chapters, don't render anything
   if (!chapters || chapters.length === 0) {
@@ -194,7 +277,11 @@ const ChapterDownloadSection: React.FC<ChapterDownloadSectionProps> = ({
           </Button>
           
           <p className="text-xs text-gray-500 mt-2 text-center">
-            Includes table of contents and all {chapters.length} formatted chapter files
+            {shouldUseServerSide ? (
+              <>Using server-side processing for {(totalTextSize / 1024).toFixed(1)}KB of text content</>
+            ) : (
+              <>Includes table of contents and all {chapters.length} formatted chapter files</>
+            )}
           </p>
         </div>
         
