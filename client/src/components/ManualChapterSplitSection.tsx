@@ -282,6 +282,16 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
             then adjust as needed. You can also split text manually or add more chapters.
           </span>
         </div>
+        <div className="mt-1 ml-4">
+          <span className="font-medium text-primary">Current chapters:</span>{" "}
+          {chapters.length === 1 ? (
+            <span>Single chapter (entire text)</span>
+          ) : (
+            <span>
+              {chapters.length} chapters - {chapters.map(c => c.title.split(":")[0]).join(", ")}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="space-y-6">
@@ -313,9 +323,17 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
             <Separator className="my-3" />
             
             <div>
-              <Label htmlFor={`chapter-content-${index}`} className="mb-1.5 block text-xs">
-                Chapter Content
-              </Label>
+              <div className="flex justify-between items-center">
+                <Label htmlFor={`chapter-content-${index}`} className="mb-1.5 block text-xs">
+                  Chapter Content
+                </Label>
+                <div className="text-xs text-slate-500">
+                  {chapter.text.length.toLocaleString()} characters
+                  {chapter.text.length > 0 && (
+                    <span> • approx. {Math.ceil(chapter.text.split(/\s+/).length / 200)} min read</span>
+                  )}
+                </div>
+              </div>
               <Textarea
                 id={`chapter-content-${index}`}
                 value={chapter.text}
@@ -323,8 +341,29 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
                 rows={6}
                 className="text-sm resize-y"
               />
-              <div className="text-xs text-slate-500 mt-1 text-right">
-                {chapter.text.length.toLocaleString()} characters
+              <div className="mt-2 text-xs">
+                <div className="flex justify-between">
+                  <div>
+                    <span className="text-slate-600 font-medium">Preview: </span>
+                    <span className="text-slate-500">
+                      {chapter.text.length > 0 
+                        ? chapter.text.substring(0, 100) + (chapter.text.length > 100 ? '...' : '')
+                        : 'No content in this chapter'}
+                    </span>
+                  </div>
+                  <div className="flex space-x-2">
+                    {chapter.text.split(/\s+/).length > 5 && (
+                      <span className="text-xs text-slate-500 px-1.5 py-0.5 bg-slate-50 rounded border border-slate-100">
+                        {chapter.text.split(/\s+/).length.toLocaleString()} words
+                      </span>
+                    )}
+                    {chapter.text.split(/\r?\n/).length > 1 && (
+                      <span className="text-xs text-slate-500 px-1.5 py-0.5 bg-slate-50 rounded border border-slate-100">
+                        {chapter.text.split(/\r?\n/).length.toLocaleString()} paragraphs
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </Card>

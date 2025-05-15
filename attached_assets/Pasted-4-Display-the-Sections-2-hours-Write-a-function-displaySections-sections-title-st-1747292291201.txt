@@ -1,0 +1,57 @@
+4. **Display the Sections (2 hours):**
+    - Write a function displaySections(sections: { [title: string]: string[] }, outputElement: HTMLElement) to:
+        - Clear the contents of the outputElement.
+        - Iterate through the sections dictionary.
+        - Create HTML elements (e.g., <h2> for the title, <p> for each line of content) and append them to the outputElement.
+    
+          `function displaySections(sections: { [title: string]: string[] }, outputElement: HTMLElement): void {
+        outputElement.innerHTML = ''; // Clear previous content
+    
+        for (const title in sections) {
+            if (sections.hasOwnProperty(title)) {
+                const sectionTitle = document.createElement('h2');
+                sectionTitle.textContent = title;
+                outputElement.appendChild(sectionTitle);
+    
+                const content = sections[title];
+                for (const line of content) {
+                    const paragraph = document.createElement('p');
+                    paragraph.textContent = line;
+                    outputElement.appendChild(paragraph);
+                }
+            }
+        }
+    }`
+    
+5. **Main Execution and Event Listener (2 hours):**
+    - In src/parser.ts, add the main execution block:
+        - Get references to the file input element and the output element.
+        - Add an event listener to the file input element to listen for the change event.
+        - In the event listener:
+            - Get the selected file from event.target.files.
+            - Call readFile to read the file content.
+            - Call parseSections to parse the content.
+            - Call displaySections to display the results.
+            - Handle any errors that occur.
+    
+          `document.addEventListener('DOMContentLoaded', () => {
+        const fileInput = document.getElementById('fileInput') as HTMLInputElement;
+        const outputElement = document.getElementById('output') as HTMLDivElement;
+    
+        fileInput.addEventListener('change', async (event) => {
+            const target = event.target as HTMLInputElement;
+            if (target.files && target.files.length > 0) {
+                const file = target.files[0];
+    
+                try {
+                    const text = await readFile(file);
+                    const pattern = new RegExp("## Section \\d+"); // Regular expression for section titles
+                    const sections = parseSections(text, pattern);
+                    displaySections(sections, outputElement);
+                } catch (error) {
+                    console.error("Error processing file:", error);
+                    outputElement.textContent = "Error processing file.  See console for details.";
+                }
+            }
+        });
+    });`

@@ -179,3 +179,106 @@ export function sectionsMapToArray(sections: { [title: string]: string[] }): Sec
 export function formatSectionContent(content: string[]): string {
     return content.join('\n');
 }
+
+/**
+ * Display sections in the DOM
+ * 
+ * @param sections Object mapping section titles to content arrays
+ * @param outputElement The HTML element to display the sections in
+ */
+export function displaySections(sections: { [title: string]: string[] }, outputElement: HTMLElement): void {
+    outputElement.innerHTML = ''; // Clear previous content
+
+    for (const title in sections) {
+        if (sections.hasOwnProperty(title)) {
+            // Create section title element
+            const sectionTitle = document.createElement('h2');
+            sectionTitle.textContent = title;
+            sectionTitle.className = 'text-lg font-semibold text-gray-800 mt-4 mb-2';
+            outputElement.appendChild(sectionTitle);
+
+            // Create container for section content
+            const contentContainer = document.createElement('div');
+            contentContainer.className = 'mb-4 text-gray-700';
+            
+            // Add each line of content as a paragraph
+            const content = sections[title];
+            if (content.length > 0) {
+                // Join content lines with appropriate spacing for paragraphs
+                for (const line of content) {
+                    if (line.trim().length > 0) { // Skip empty lines
+                        const paragraph = document.createElement('p');
+                        paragraph.textContent = line;
+                        paragraph.className = 'mb-2';
+                        contentContainer.appendChild(paragraph);
+                    } else {
+                        // Create spacing for empty lines
+                        const spacer = document.createElement('div');
+                        spacer.className = 'h-2';
+                        contentContainer.appendChild(spacer);
+                    }
+                }
+            } else {
+                // Show placeholder for empty sections
+                const emptyNotice = document.createElement('p');
+                emptyNotice.textContent = 'No content in this section';
+                emptyNotice.className = 'text-gray-400 italic';
+                contentContainer.appendChild(emptyNotice);
+            }
+            
+            outputElement.appendChild(contentContainer);
+        }
+    }
+}
+
+/**
+ * Initialize event listeners for file input
+ * 
+ * @param fileInputId The ID of the file input element
+ * @param outputElementId The ID of the output element
+ * @param patternString Optional regex pattern string for section detection
+ */
+export function initializeFileParser(
+    fileInputId: string, 
+    outputElementId: string, 
+    patternString: string = "## Section \\d+"
+): void {
+    document.addEventListener('DOMContentLoaded', () => {
+        const fileInput = document.getElementById(fileInputId) as HTMLInputElement;
+        const outputElement = document.getElementById(outputElementId) as HTMLDivElement;
+        
+        if (!fileInput || !outputElement) {
+            console.error("Could not find required elements:", { fileInputId, outputElementId });
+            return;
+        }
+
+        fileInput.addEventListener('change', async (event) => {
+            const target = event.target as HTMLInputElement;
+            if (target.files && target.files.length > 0) {
+                const file = target.files[0];
+
+                try {
+                    // Read the file
+                    const text = await readFile(file);
+                    
+                    // Create pattern from string
+                    const pattern = new RegExp(patternString);
+                    
+                    // Parse the text into sections
+                    const { sections } = parseSections(text, [pattern]);
+                    
+                    // Display the sections
+                    displaySections(sections, outputElement);
+                } catch (error) {
+                    console.error("Error processing file:", error);
+                    outputElement.innerHTML = `
+                        <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                            <p class="font-medium">Error processing file</p>
+                            <p class="text-sm">${error instanceof Error ? error.message : 'Unknown error'}</p>
+                        </div>
+                    `;
+                }
+            }
+        });
+    });
+}
