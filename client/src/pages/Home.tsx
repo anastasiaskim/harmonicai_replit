@@ -228,17 +228,27 @@ const Home = () => {
               variant: "warning",
             });
             
-            // Need to check if ELEVENLABS_API_KEY is available or expired
-            const secretsResponse = await fetch('/api/check-secret?key=ELEVENLABS_API_KEY');
-            if (secretsResponse.ok) {
-              const secretsData = await secretsResponse.json();
-              if (!secretsData.exists) {
-                toast({
-                  title: "API Key Missing",
-                  description: "Please provide a valid ElevenLabs API key.",
-                  variant: "destructive",
-                });
+            // Check if ELEVENLABS_API_KEY is available or expired
+            try {
+              const secretsResponse = await fetch('/api/check-secret?key=ELEVENLABS_API_KEY');
+              if (secretsResponse.ok) {
+                const secretsData = await secretsResponse.json();
+                if (!secretsData.exists) {
+                  toast({
+                    title: "API Key Missing",
+                    description: "Please provide a valid ElevenLabs API key to generate audio.",
+                    variant: "destructive",
+                  });
+                } else if (secretsData.isValid === false) {
+                  toast({
+                    title: "API Key Invalid",
+                    description: "The ElevenLabs API key appears to be invalid or has expired.",
+                    variant: "destructive",
+                  });
+                }
               }
+            } catch (secretErr) {
+              console.error("Error checking API key status:", secretErr);
             }
           }
         } else {

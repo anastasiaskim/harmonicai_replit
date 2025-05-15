@@ -324,6 +324,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to fetch analytics" });
     }
   });
+  
+  // API endpoint to check if an API key exists and is valid
+  app.get("/api/check-secret", async (req: Request, res: Response) => {
+    try {
+      const { key } = req.query;
+      
+      if (!key || typeof key !== 'string') {
+        return res.status(400).json({ error: "Key parameter is required" });
+      }
+      
+      // Check if the environment variable exists
+      const apiKey = process.env[key];
+      const exists = !!apiKey && apiKey.length > 0;
+      
+      // For Eleven Labs specifically, test the key validity
+      if (key === 'ELEVENLABS_API_KEY' && exists) {
+        try {
+          // Make a simple request to the ElevenLabs API to check key validity
+          const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+            headers: {
+              'xi-api-key': apiKey
+            }
+          });
+          
+          const isValid = response.ok;
+          return res.json({ exists, isValid });
+        } catch (error) {
+          console.error("Error testing ElevenLabs API key:", error);
+          return res.json({ exists, isValid: false });
+        }
+      }
+      
+      // For other keys, just return if they exist
+      return res.json({ exists });
+    } catch (error) {
+      console.error("Error checking secret:", error);
+      res.status(500).json({ error: "Failed to check secret" });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;
