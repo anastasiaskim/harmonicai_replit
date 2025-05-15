@@ -269,17 +269,60 @@ class AudioService {
     } catch (error: any) {
       console.error('Error calling ElevenLabs API:', error);
       console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
       
-      // If in development mode, create a mock audio file for testing
-      if (process.env.NODE_ENV === 'development') {
-        // Create an empty file as a placeholder
-        fs.writeFileSync(filePath, Buffer.from(''));
-        console.log(`Created empty placeholder file for ${fileName} in development mode`);
+      // More detailed error information based on axios error structure
+      let errorDetails = 'Unknown error';
+      let isQuotaExceeded = false;
+      
+      if (error.response) {
+        // The request was made and the server responded with a status code outside of 2xx range
+        const status = error.response.status;
+        const responseData = error.response.data;
+        
+        console.error(`ElevenLabs API error status: ${status}`);
+        console.error('Response data:', responseData);
+
+        if (status === 401) {
+          errorDetails = 'Invalid or expired API key (Unauthorized)';
+        } else if (status === 429) {
+          errorDetails = 'API quota exceeded or rate limit reached';
+          isQuotaExceeded = true;
+        } else if (responseData && typeof responseData === 'object') {
+          // Try to extract error message from response
+          if (responseData.detail) {
+            errorDetails = responseData.detail;
+            // Check if this is a quota exceeded error
+            if (typeof errorDetails === 'string' && 
+                (errorDetails.includes('quota') || 
+                 errorDetails.includes('limit') || 
+                 errorDetails.includes('exceed'))) {
+              isQuotaExceeded = true;
+            }
+          }
+        }
+      } else if (error.request) {
+        // The request was made but no response was received
+        errorDetails = 'No response received from ElevenLabs API (network issue or service down)';
+      } else {
+        // Something happened in setting up the request
+        errorDetails = error.message || 'Error setting up the request';
+      }
+      
+      console.error('Error details:', errorDetails);
+      
+      // Always create an empty file as a placeholder to avoid crashing the application
+      // This allows the player to handle the error gracefully
+      fs.writeFileSync(filePath, Buffer.from(''));
+      console.log(`Created empty placeholder file for ${fileName} due to API error`);
+      
+      // For quota exceeded errors, we return the empty file path
+      // but for other errors we throw to allow proper handling
+      if (isQuotaExceeded || process.env.NODE_ENV === 'development') {
+        console.log('Returning empty file due to quota exceeded or development mode');
         return `/audio/${fileName}`;
       }
       
-      throw new Error(`Failed to generate audio: ${error?.message || 'Unknown error'}`);
+      throw new Error(`Failed to generate audio: ${errorDetails}`);
     }
   }
 
