@@ -15,8 +15,9 @@ export interface Chapter {
 
 /**
  * Common patterns for chapter headings in ebooks
+ * These can be extended or modified to accommodate different book formats
  */
-const CHAPTER_PATTERNS = [
+export const CHAPTER_PATTERNS = [
   // Pattern for "Chapter X" or "Chapter X:" or "CHAPTER X" etc.
   /^\s*(chapter|CHAPTER)\s+(\d+|[IVXLCivxlc]+)[\s:.]*(.*)$/,
   
@@ -29,8 +30,17 @@ const CHAPTER_PATTERNS = [
   // Pattern for 'Part X' headings
   /^\s*(part|PART)\s+(\d+|[IVXLCivxlc]+)[\s:.]*(.*)$/,
   
+  // Pattern for 'Section X' headings
+  /^\s*(section|SECTION)\s+(\d+|[IVXLCivxlc]+)[\s:.]*(.*)$/,
+  
   // Pattern for common chapter title formats with non-numeric identifiers
-  /^\s*(prologue|epilogue|introduction|foreword|preface|afterword|conclusion|appendix|INDEX|CONTENTS)/i
+  /^\s*(prologue|epilogue|introduction|foreword|preface|afterword|conclusion|appendix|INDEX|CONTENTS)/i,
+  
+  // Pattern for chapter titles with dash or star prefixes
+  /^\s*[\*\-\—\–]\s*(.+)$/,
+  
+  // Pattern for numbered chapters without the word "Chapter"
+  /^\s*(\d+)\.\s+(.+)$/
 ];
 
 /**
@@ -98,85 +108,15 @@ const extractChapterTitle = (line: string, index: number): string => {
 
 /**
  * Improved chapter detection algorithm with configurable patterns
+ * This function uses the chunkByChapter utility for better organization and reusability
+ * 
+ * @param text The full text content to analyze
+ * @param customPatterns Optional additional patterns to use for detection
+ * @returns An array of chapter objects with title and text
  */
-export const detectChapters = (text: string): Chapter[] => {
-  // Split text into lines while preserving line breaks
-  const lines = text.split('\n');
-  const chapters: Chapter[] = [];
-  
-  let currentChapter = '';
-  let currentTitle = '';
-  let chapterIndex = 1;
-  let inChapter = false;
-  
-  // Find the first chapter heading
-  for (let i = 0; i < Math.min(50, lines.length); i++) {
-    if (isChapterHeading(lines[i])) {
-      currentTitle = extractChapterTitle(lines[i], chapterIndex);
-      inChapter = true;
-      // Skip this line as it's the title
-      continue;
-    }
-    
-    // If we've found a chapter title, start collecting text
-    if (inChapter) {
-      currentChapter += lines[i] + '\n';
-    }
-  }
-  
-  // If no chapter heading was found in the first 50 lines, use default title
-  if (!inChapter) {
-    currentTitle = 'Chapter 1';
-    inChapter = true;
-    
-    // Include all content from the beginning
-    for (let i = 0; i < Math.min(50, lines.length); i++) {
-      currentChapter += lines[i] + '\n';
-    }
-  }
-  
-  // Process the rest of the content
-  for (let i = 50; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    // Check if this line could be a new chapter heading
-    if (isChapterHeading(line)) {
-      // Save the current chapter
-      if (currentChapter.trim().length > 0) {
-        chapters.push({
-          title: currentTitle,
-          text: currentChapter.trim()
-        });
-      }
-      
-      // Start a new chapter
-      chapterIndex++;
-      currentTitle = extractChapterTitle(line, chapterIndex);
-      currentChapter = '';
-    } else {
-      // Add this line to the current chapter content
-      currentChapter += line + '\n';
-    }
-  }
-  
-  // Add the last chapter if it has content
-  if (currentChapter.trim().length > 0) {
-    chapters.push({
-      title: currentTitle,
-      text: currentChapter.trim()
-    });
-  }
-  
-  // If no chapters were detected at all, treat the entire text as one chapter
-  if (chapters.length === 0 && text.trim().length > 0) {
-    chapters.push({
-      title: 'Chapter 1',
-      text: text.trim()
-    });
-  }
-  
-  console.log(`Detected ${chapters.length} chapters in the text`);
-  return chapters;
+export const detectChapters = (text: string, customPatterns?: RegExp[]): Chapter[] => {
+  // Simply delegate to our comprehensive chunking utility
+  return chunkByChapter(text, customPatterns);
 };
 
 /**
@@ -212,6 +152,154 @@ export const estimateAudioSize = (text: string): number => {
  * @param text The full text content
  * @returns The extracted book title or a default title
  */
+/**
+ * Chunks text content into chapters based on configured patterns
+ * 
+ * @param text The full text content to split into chapters
+ * @param customPatterns Optional additional regex patterns to identify chapter headings
+ * @returns An array of chapter objects with title and text
+ */
+export const chunkByChapter = (
+  text: string, 
+  customPatterns?: RegExp[]
+): Chapter[] => {
+  console.log('Starting chapter chunking process...');
+  
+  // Create a combined set of patterns (standard + any custom ones)
+  const patterns = [...CHAPTER_PATTERNS];
+  if (customPatterns && customPatterns.length > 0) {
+    patterns.push(...customPatterns);
+    console.log(`Added ${customPatterns.length} custom chapter detection patterns`);
+  }
+  
+  // Split text into lines
+  const lines = text.split('\n');
+  console.log(`Text split into ${lines.length} lines for processing`);
+  
+  // Store detected chapter boundaries (line numbers)
+  const chapterBoundaries: { lineNumber: number, title: string }[] = [];
+  
+  // Scan through lines to find chapter headings
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Skip empty lines
+    if (line.length === 0) continue;
+    
+    // Check if this line matches our chapter heading patterns
+    let isHeading = false;
+    let extractedTitle = '';
+    
+    // First check against explicit patterns
+    for (const pattern of patterns) {
+      const match = line.match(pattern);
+      if (match) {
+        isHeading = true;
+        
+        // Extract an appropriate title based on the matched pattern
+        if (match[1]?.toLowerCase() === 'chapter' || 
+            match[1]?.toLowerCase() === 'part' || 
+            match[1]?.toLowerCase() === 'section') {
+          // For structured headings like "Chapter 1: Title"
+          const chapterNum = match[2] || (chapterBoundaries.length + 1);
+          const additionalTitle = match[3]?.trim();
+          
+          if (additionalTitle) {
+            extractedTitle = `${match[1]} ${chapterNum}: ${additionalTitle}`;
+          } else {
+            extractedTitle = `${match[1]} ${chapterNum}`;
+          }
+        } else if (/^[IVXLCivxlc]+$/.test(match[1] || '')) {
+          // For Roman numeral-only headings
+          extractedTitle = `Chapter ${match[1]}`;
+        } else if (/^\d+$/.test(match[1] || '')) {
+          // For number-only headings
+          extractedTitle = `Chapter ${match[1]}`;
+        } else if (match[1] && match[2]) {
+          // For patterns like "1. Title"
+          extractedTitle = `Chapter ${match[1]}: ${match[2]}`;
+        } else {
+          // For other patterns, use the whole line or specific capture group
+          extractedTitle = match[1] ? match[1] : line;
+        }
+        
+        break;
+      }
+    }
+    
+    // If not matched by explicit patterns, try heuristic detection
+    if (!isHeading) {
+      // Short standalone line surrounded by blank lines might be a heading
+      const isPreviousLineBlank = i === 0 || lines[i-1].trim().length === 0;
+      const isNextLineBlank = i === lines.length-1 || lines[i+1].trim().length === 0;
+      
+      if (line.length > 2 && line.length < 50 && isPreviousLineBlank && isNextLineBlank) {
+        // This looks like an isolated title line
+        isHeading = true;
+        extractedTitle = line;
+      }
+      
+      // ALL CAPS line that's relatively short might be a heading
+      if (line.length > 2 && line.length < 60 && 
+          line === line.toUpperCase() && 
+          line !== line.toLowerCase()) {
+        isHeading = true;
+        extractedTitle = line;
+      }
+    }
+    
+    // If we detected a heading, add it to our boundaries
+    if (isHeading) {
+      console.log(`Detected chapter heading at line ${i+1}: "${extractedTitle}"`);
+      chapterBoundaries.push({
+        lineNumber: i,
+        title: extractedTitle
+      });
+    }
+  }
+  
+  // Process the detected chapters
+  const chapters: Chapter[] = [];
+  
+  for (let i = 0; i < chapterBoundaries.length; i++) {
+    const startLine = chapterBoundaries[i].lineNumber + 1; // Skip the heading line
+    const endLine = i < chapterBoundaries.length - 1 
+      ? chapterBoundaries[i + 1].lineNumber 
+      : lines.length;
+    
+    // Extract the text for this chapter
+    const chapterText = lines.slice(startLine, endLine).join('\n').trim();
+    
+    // Only add chapters with actual content
+    if (chapterText.length > 0) {
+      chapters.push({
+        title: chapterBoundaries[i].title,
+        text: chapterText
+      });
+    }
+  }
+  
+  // Handle the case where no chapters were detected
+  if (chapters.length === 0 && text.trim().length > 0) {
+    console.log('No chapter boundaries detected, treating entire text as one chapter');
+    chapters.push({
+      title: 'Chapter 1',
+      text: text.trim()
+    });
+  }
+  
+  console.log(`Chunking complete. Extracted ${chapters.length} chapters.`);
+  
+  return chapters;
+};
+
+/**
+ * Extracts a potential book title from the text content
+ * Uses heuristics to find a line that looks like it could be a title
+ * 
+ * @param text The full text content
+ * @returns The extracted book title or a default title
+ */
 export const extractBookTitle = (text: string): string => {
   if (!text || text.trim().length === 0) {
     return 'Untitled Book';
@@ -219,8 +307,13 @@ export const extractBookTitle = (text: string): string => {
 
   const lines = text.split('\n');
   
-  // Search through the first 20 lines for potential title candidates
-  for (let i = 0; i < Math.min(20, lines.length); i++) {
+  // For a more accurate title extraction, we'll try to find consecutive
+  // title-like lines at the beginning of the document
+  let titleLines: string[] = [];
+  let foundSignificantTitle = false;
+  
+  // Search through the first 25 lines for potential title candidates
+  for (let i = 0; i < Math.min(25, lines.length); i++) {
     const line = lines[i].trim();
     
     // Skip empty lines
@@ -228,20 +321,54 @@ export const extractBookTitle = (text: string): string => {
     
     // Look for short lines that might be titles
     if (line.length > 2 && line.length < 70) {
-      // Check for lines that are in ALL CAPS (common for titles)
+      // Check for lines that are in ALL CAPS (common for main titles)
       if (line === line.toUpperCase() && line !== line.toLowerCase()) {
-        return line;
+        titleLines.push(line);
+        foundSignificantTitle = true;
+        continue;
       }
       
-      // If we're still in the first few lines and the line doesn't look like
-      // a chapter heading, it might be a title
-      if (i < 5 && !isChapterHeading(line)) {
-        return line;
+      // Look for lines that might be subtitles
+      if (i < 10 && !isChapterHeading(line)) {
+        // If we already found a significant title, this might be a subtitle
+        if (foundSignificantTitle) {
+          titleLines.push(line);
+        } 
+        // If we haven't found a title yet, this might be our main title
+        else if (titleLines.length === 0) {
+          titleLines.push(line);
+        }
+      }
+    } else if (titleLines.length > 0) {
+      // We've reached a line that doesn't look like a title after finding title-like lines
+      // This likely means we're done with the title section
+      break;
+    }
+  }
+  
+  // If we found multiple title lines, combine them
+  if (titleLines.length > 0) {
+    // Join title lines, but limit to a maximum of 2-3 lines to avoid overly long titles
+    const combinedTitle = titleLines.slice(0, 3).join(' - ');
+    return combinedTitle;
+  }
+  
+  // If we couldn't find a good title candidate in the initial lines,
+  // try to examine the first few characters more carefully
+  if (text.length > 100) {
+    const firstPart = text.substring(0, 100);
+    const firstPartLines = firstPart.split('\n').filter(line => line.trim().length > 0);
+    
+    if (firstPartLines.length > 0) {
+      // Try to find the first non-empty line that might be the title
+      const potentialTitle = firstPartLines[0].trim();
+      if (potentialTitle.length > 2 && potentialTitle.length < 50) {
+        return potentialTitle;
       }
     }
   }
   
-  // If we couldn't find a good title candidate, try to get one from the first chapter
+  // If we still couldn't find a title, try to get one from the first chapter
   const chapters = detectChapters(text);
   if (chapters.length > 0) {
     const firstChapterTitle = chapters[0].title;
