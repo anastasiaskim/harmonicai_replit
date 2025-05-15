@@ -163,6 +163,12 @@ const Home = () => {
               isGenerating={isGenerating}
               isDisabled={!text || chapters.length === 0}
             />
+            
+            <QuickConversionSection
+              selectedVoice={selectedVoice}
+              onVoiceSelect={handleVoiceSelect}
+              voices={(voices as Voice[]) || []}
+            />
           </div>
           
           {/* Right Column - Preview & Results */}

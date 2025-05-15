@@ -106,15 +106,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Convert text to speech using ElevenLabs API
   app.post("/api/text-to-speech", async (req: Request, res: Response) => {
     try {
+      console.log("Received text-to-speech request with body length:", JSON.stringify(req.body).length);
+      
       // Validate request using domain schema
       const parsedBody = textToSpeechSchema.safeParse(req.body);
       if (!parsedBody.success) {
         const validationError = fromZodError(parsedBody.error);
+        console.log("Validation error:", validationError.message);
         return res.status(400).json({ error: validationError.message });
       }
 
+      console.log("Request validated successfully");
+      console.log("Processing", parsedBody.data.chapters.length, "chapters");
+
       // Execute the use case
       const result = await generateAudiobookUseCase(parsedBody.data);
+      
+      console.log("Generated audiobook successfully with", result.length, "chapters");
       
       res.json({
         success: true,
@@ -126,6 +134,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: fromZodError(error).message });
       }
       if (error instanceof Error) {
+        console.error("Error details:", error.stack);
         return res.status(500).json({ error: error.message });
       }
       return res.status(500).json({ error: "Failed to generate audio" });

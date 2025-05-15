@@ -141,12 +141,17 @@ class AudioService {
     enableRealApiCall: boolean = true
   ): Promise<InsertChapter> {
     try {
+      console.log(`Generating audio for chapter "${chapter.title}" using voice "${voiceId}"`);
+      console.log(`Chapter text length: ${chapter.text.length} characters`);
+      
       // Convert chapter text to audio
       const audioUrl = await this.convertTextToSpeech({
-        text: chapter.text,
+        text: chapter.text.substring(0, 5000), // Limit to 5000 chars for ElevenLabs API
         voiceId,
         title: chapter.title
       });
+      
+      console.log(`Generated audio URL: ${audioUrl}`);
       
       // Get file stats if it exists
       let duration = 0;
@@ -159,21 +164,26 @@ class AudioService {
         
         // Estimate duration: ~1 second per 1.5KB for MP3 files at 128kbps
         duration = Math.ceil(size / 1500);
+        console.log(`Audio file exists. Size: ${size} bytes, Duration: ${duration} seconds`);
       } else {
         // Fallback to estimation if file doesn't exist
         const wordCount = chapter.text.split(/\s+/).length;
         duration = Math.floor(wordCount / 3); // ~3 words per second reading speed
         size = Math.floor(chapter.text.length / 10) * 1024; // ~0.1KB per character
+        console.log(`Audio file not found. Using estimation. Duration: ${duration} seconds, Size: ${size} bytes`);
       }
       
       // Create chapter data for storage
-      return {
+      const result = {
         title: chapter.title,
         audioUrl,
         duration,
         size,
         createdAt: new Date().toISOString()
       };
+      
+      console.log(`Chapter data prepared:`, result);
+      return result;
     } catch (error) {
       console.error('Error generating audio:', error);
       throw error;
