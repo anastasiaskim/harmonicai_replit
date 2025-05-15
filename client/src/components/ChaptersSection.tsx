@@ -1,7 +1,7 @@
-import React from 'react';
-import { BookOpen, Download } from 'lucide-react';
+import React, { useState } from 'react';
+import { BookOpen, Download, Play, Clock, Music, FileAudio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import AudioPlayer from './AudioPlayer';
+import GlobalAudioPlayer from './GlobalAudioPlayer';
 
 interface Chapter {
   id: number;
@@ -16,12 +16,28 @@ interface ChaptersSectionProps {
 }
 
 const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
+  const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
+
   // Function to format file size
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
+
+  // Function to format duration
+  const formatDuration = (seconds: number): string => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
+  };
+
+  // Calculate total duration
+  const totalDuration = chapters.reduce((sum, chapter) => sum + chapter.duration, 0);
+  const totalDurationFormatted = formatDuration(totalDuration);
+
+  // Calculate total size
+  const totalSize = chapters.reduce((sum, chapter) => sum + chapter.size, 0);
 
   // Function to handle download all chapters
   const handleDownloadAll = () => {
@@ -31,6 +47,11 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
     });
   };
 
+  // Function to play a specific chapter
+  const playChapter = (index: number) => {
+    setSelectedChapterIndex(index);
+  };
+
   return (
     <section>
       <h2 className="font-bold text-xl text-gray-800 mb-4 flex items-center">
@@ -38,32 +59,68 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
         Your Audiobook Chapters
       </h2>
       
-      <div className="space-y-4">
-        {chapters.map((chapter) => (
+      {/* Global Audio Player */}
+      <div className="mb-6">
+        <GlobalAudioPlayer 
+          chapters={chapters}
+        />
+      </div>
+      
+      {/* Audiobook stats */}
+      {chapters.length > 0 && (
+        <div className="flex items-center justify-between mb-4 text-sm text-gray-600 bg-gray-50 rounded-lg p-3">
+          <div className="flex items-center">
+            <Music className="h-4 w-4 mr-1.5 text-gray-500" />
+            <span>{chapters.length} chapter{chapters.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="flex items-center">
+            <Clock className="h-4 w-4 mr-1.5 text-gray-500" />
+            <span>Total: {totalDurationFormatted}</span>
+          </div>
+          <div className="flex items-center">
+            <FileAudio className="h-4 w-4 mr-1.5 text-gray-500" />
+            <span>{formatFileSize(totalSize)}</span>
+          </div>
+        </div>
+      )}
+      
+      {/* Chapter list */}
+      <div className="space-y-2">
+        {chapters.map((chapter, index) => (
           <div 
             key={chapter.id} 
-            className="bg-white rounded-xl shadow-md overflow-hidden hover:translate-y-[-3px] transition-transform duration-200"
+            className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:border-primary/30 transition-colors duration-200"
           >
-            <div className="p-4">
-              <h3 className="font-medium text-gray-800">{chapter.title}</h3>
+            <div className="p-3">
+              <div className="flex justify-between items-center">
+                <h3 className="font-medium text-gray-800 truncate flex-1">{chapter.title}</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-primary hover:text-primary-dark hover:bg-primary/10 h-8 mr-1"
+                  onClick={() => playChapter(index)}
+                >
+                  <Play className="h-4 w-4 mr-1" />
+                  Play
+                </Button>
+              </div>
               
-              <AudioPlayer 
-                audioUrl={chapter.audioUrl}
-                duration={chapter.duration}
-              />
-              
-              <div className="flex justify-between items-center mt-3">
-                <div className="text-xs text-gray-500 flex items-center">
+              <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
+                <div className="flex items-center">
+                  <Clock className="h-3.5 w-3.5 mr-1 text-gray-400" />
+                  {formatDuration(chapter.duration)}
+                </div>
+                <div className="flex items-center">
                   <span className="mr-1">Size:</span>
                   {formatFileSize(chapter.size)}
                 </div>
                 <a 
                   href={chapter.audioUrl}
                   download={`${chapter.title ? chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'audio'}.mp3`}
-                  className="text-teal-600 hover:text-teal-700 flex items-center text-sm font-medium"
+                  className="text-teal-600 hover:text-teal-700 flex items-center"
                 >
-                  <Download className="h-4 w-4 mr-1" />
-                  Download MP3
+                  <Download className="h-3.5 w-3.5 mr-1" />
+                  Download
                 </a>
               </div>
             </div>
@@ -71,6 +128,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
         ))}
       </div>
       
+      {/* Download all button */}
       {chapters.length > 1 && (
         <div className="mt-6 text-center">
           <Button 
