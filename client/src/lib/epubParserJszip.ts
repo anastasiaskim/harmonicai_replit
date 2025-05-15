@@ -203,6 +203,9 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
             // Remove script and style tags
             $chapter('script, style').remove();
             
+            // Store original HTML content
+            chapter.htmlContent = $chapter('body').html() || '';
+            
             // Extract text
             const text = $chapter('body').text().trim();
             chapter.text = text;
@@ -349,7 +352,8 @@ export function extractChaptersFromHeadings(html: string): EpubChapter[] {
       title,
       level,
       text: text.trim(),
-      index: index++
+      index: index++,
+      source: 'heading'
     });
   });
   

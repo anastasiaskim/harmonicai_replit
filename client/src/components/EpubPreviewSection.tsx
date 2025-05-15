@@ -91,9 +91,23 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
               <span className="font-medium">EPUB</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Source:</span>
-              <span className="font-medium">
-                {epubData.chapters.some(ch => ch.id.startsWith('nav-')) ? 'NCX/OPF Metadata' : 'HTML Headings'}
+              <span className="text-gray-500">Chapter Sources:</span>
+              <span className="font-medium flex gap-1">
+                {epubData.chapters.filter(ch => ch.source === 'ncx').length > 0 && (
+                  <span className="bg-green-100 text-green-700 text-xs px-1 rounded">
+                    NCX: {epubData.chapters.filter(ch => ch.source === 'ncx').length}
+                  </span>
+                )}
+                {epubData.chapters.filter(ch => ch.source === 'heading').length > 0 && (
+                  <span className="bg-blue-100 text-blue-700 text-xs px-1 rounded">
+                    Headings: {epubData.chapters.filter(ch => ch.source === 'heading').length}
+                  </span>
+                )}
+                {epubData.chapters.filter(ch => ch.source === 'spine').length > 0 && (
+                  <span className="bg-purple-100 text-purple-700 text-xs px-1 rounded">
+                    Spine: {epubData.chapters.filter(ch => ch.source === 'spine').length}
+                  </span>
+                )}
               </span>
             </div>
             <div className="flex justify-between">
@@ -131,14 +145,26 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
           <TabsContent value="toc" className="pt-4">
             <ScrollArea className="h-60 rounded-md border p-4">
               <div className="space-y-1">
-                {/* Source indicator */}
-                <div className="bg-blue-50 text-blue-700 text-xs p-2 mb-2 rounded-md border border-blue-100">
-                  Source: {epubData.chapters.some(ch => ch.id.startsWith('nav-')) 
-                    ? 'NCX/OPF Metadata' 
-                    : epubData.chapters.some(ch => ch.id.startsWith('heading-'))
-                      ? 'HTML Headings'
-                      : 'Spine Items'
-                  }
+                {/* Source indicators */}
+                <div className="bg-gray-50 text-gray-700 text-xs p-2 mb-2 rounded-md border border-gray-200">
+                  <div className="font-medium mb-1">Chapter Sources:</div>
+                  <div className="flex flex-wrap gap-1">
+                    {epubData.chapters.filter(ch => ch.source === 'ncx').length > 0 && (
+                      <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full">
+                        NCX: {epubData.chapters.filter(ch => ch.source === 'ncx').length}
+                      </span>
+                    )}
+                    {epubData.chapters.filter(ch => ch.source === 'heading').length > 0 && (
+                      <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full">
+                        Headings: {epubData.chapters.filter(ch => ch.source === 'heading').length}
+                      </span>
+                    )}
+                    {epubData.chapters.filter(ch => ch.source === 'spine').length > 0 && (
+                      <span className="bg-purple-100 text-purple-700 text-xs px-2 py-1 rounded-full">
+                        Spine: {epubData.chapters.filter(ch => ch.source === 'spine').length}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 
                 {epubData.chapters.map((chapter, index) => (
@@ -160,16 +186,23 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                       <ChevronRight className="h-4 w-4 mr-1 flex-shrink-0" />
                       <span className="text-sm truncate">{chapter.title}</span>
                       
-                      {/* Show badge for heading-based chapters */}
-                      {chapter.id.startsWith('heading-') && (
-                        <span className={`ml-2 text-xs px-1 rounded ${
-                          selectedChapter?.id === chapter.id 
-                            ? 'bg-white bg-opacity-20 text-white' 
-                            : 'bg-gray-100 text-gray-600'
-                        }`}>
-                          H{chapter.level + 1}
-                        </span>
-                      )}
+                      {/* Show source badge with different colors based on source */}
+                      <span className={`ml-2 text-xs px-1 rounded ${
+                        selectedChapter?.id === chapter.id 
+                          ? 'bg-white bg-opacity-20 text-white' 
+                          : chapter.source === 'ncx'
+                            ? 'bg-green-100 text-green-700'
+                            : chapter.source === 'heading'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-purple-100 text-purple-700'
+                      }`}>
+                        {chapter.source === 'ncx' 
+                          ? 'NCX' 
+                          : chapter.source === 'heading'
+                            ? `H${chapter.level + 1}`
+                            : 'Spine'
+                        }
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -207,7 +240,11 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                 
                 <ScrollArea className="h-60 rounded-md border p-4">
                   <div className="prose prose-sm max-w-none">
-                    <p>{selectedChapter.text || 'Loading chapter content...'}</p>
+                    {selectedChapter.htmlContent ? (
+                      <div dangerouslySetInnerHTML={{ __html: selectedChapter.htmlContent }} />
+                    ) : (
+                      <p>{selectedChapter.text || 'Loading chapter content...'}</p>
+                    )}
                   </div>
                 </ScrollArea>
                 
@@ -227,7 +264,8 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                       size="sm"
                       className="text-xs"
                       onClick={() => {
-                        const chapterContent = `## ${selectedChapter.title}\n\n${selectedChapter.text}`;
+                        // Use text content for processing even if HTML is available to avoid markup issues
+                        const chapterContent = `## ${selectedChapter.title}\n\n${selectedChapter.text || ''}`;
                         onSelectChapter(chapterContent, selectedChapter.title);
                       }}
                     >
