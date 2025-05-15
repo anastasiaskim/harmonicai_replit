@@ -193,15 +193,15 @@ const Home = () => {
         });
         
         // Send individual chapter for processing
-        const response = await fetch('/api/convert-to-audio', {
+        // Using the full text-to-speech API instead of the quick conversion endpoint
+        const response = await fetch('/api/text-to-speech', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text: chapter.text,
+            chapters: [{ title: chapter.title, text: chapter.text }],
             voiceId: selectedVoice,
-            title: chapter.title,
           }),
         });
 
