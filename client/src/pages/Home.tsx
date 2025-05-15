@@ -122,31 +122,56 @@ const Home = () => {
 
     setIsGenerating(true);
     setError(null);
+    
+    // Temporary array to collect processed chapters
+    const processedChapters: GeneratedChapter[] = [];
 
     try {
-      const response = await fetch('/api/text-to-speech', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text,
-          voice: selectedVoice,
-          chapters,
-        }),
+      // Process each chapter individually to avoid the 50,000 character limit
+      toast({
+        title: "Processing Audiobook",
+        description: `Starting to process ${chapters.length} chapters...`,
       });
+      
+      // Process chapters one by one to avoid size limitations
+      for (let i = 0; i < chapters.length; i++) {
+        const chapter = chapters[i];
+        
+        toast({
+          title: "Processing Chapter",
+          description: `Converting chapter ${i+1} of ${chapters.length}: "${chapter.title}"`,
+        });
+        
+        // Send individual chapter for processing
+        const response = await fetch('/api/convert-to-audio', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: chapter.text,
+            voiceId: selectedVoice,
+            title: chapter.title,
+          }),
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to generate audiobook');
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || `Failed to generate audio for chapter "${chapter.title}"`
+          );
+        }
+
+        const chapterData = await response.json();
+        processedChapters.push(chapterData);
+        
+        // Update UI with progress
+        setGeneratedChapters([...processedChapters]);
       }
-
-      const data = await response.json();
-      setGeneratedChapters(data.chapters);
       
       toast({
         title: "Audiobook Generated",
-        description: `Successfully created ${data.chapters.length} audio chapters.`,
+        description: `Successfully created ${processedChapters.length} audio chapters.`,
       });
     } catch (err: any) {
       setError(err.message || 'Failed to generate audiobook');

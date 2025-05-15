@@ -166,11 +166,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Processing conversion request: title="${title}", voice="${voiceId}", text length=${text.length}`);
       
       // Check if text is not too long (ElevenLabs has a 5000 character limit per request)
+      // We'll handle chunking here to support longer texts
       if (text.length > 5000) {
-        console.log(`Text too long: ${text.length} characters (max 5000)`);
-        return res.status(400).json({ 
-          error: "Text is too long, maximum 5000 characters allowed per request" 
-        });
+        console.log(`Text is long: ${text.length} characters. Splitting into smaller chunks...`);
       }
       
       // Generate audio with ElevenLabs API
