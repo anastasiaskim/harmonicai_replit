@@ -1,157 +1,117 @@
 /**
- * Application Layer: Use Cases
- * Contains the business logic for the application
+ * Application Use Cases
+ * 
+ * This file contains the business logic and use cases for the application
+ * following the clean architecture pattern. It coordinates between
+ * infrastructure services and API routes.
  */
 
-import { storage } from '../storage';
+import { z } from 'zod';
+import { chapterService, ChunkingResult } from '../infrastructure/chapterService';
 import { aiService } from '../infrastructure/aiService';
-import type { ChapterDetectionResult } from '../infrastructure/aiService';
-import { ChunkingResult } from '../../client/src/lib/chapterDetection';
-import { convertAIDetectionToChapters } from '../../client/src/lib/chapterDetection';
-import type { Voice } from '@shared/schema';
-import type { TextToSpeechRequest } from '@shared/schema';
-import type { Request, Response } from 'express';
-import multer from 'multer';
+import { storage } from '../storage';
+import { log } from '../vite';
 
 /**
- * UseCase for detecting chapters in text using AI
+ * Schema for the AI API key validation request
+ */
+export const apiKeySchema = z.object({
+  service: z.string(),
+  key: z.string().min(1)
+});
+
+/**
+ * Schema for the chapter detection request
+ */
+export const chapterDetectionSchema = z.object({
+  text: z.string().min(1),
+  useAI: z.boolean().optional().default(true)
+});
+
+/**
+ * Use case for validating and storing API keys
+ */
+export class ApiKeyUseCase {
+  /**
+   * Set and validate an API key
+   * 
+   * @param service The service identifier (e.g., 'google_ai')
+   * @param key The API key to validate and store
+   * @returns Success status and message
+   */
+  async setApiKey(service: string, key: string): Promise<{ success: boolean; message: string }> {
+    try {
+      // Currently only supporting Google AI service
+      if (service === 'google_ai') {
+        const result = await aiService.setApiKey(key);
+        
+        if (result) {
+          return {
+            success: true,
+            message: 'Google AI API key validated and stored successfully'
+          };
+        } else {
+          return {
+            success: false,
+            message: 'Failed to validate or store Google AI API key'
+          };
+        }
+      }
+      
+      return {
+        success: false,
+        message: `Unsupported service: ${service}`
+      };
+    } catch (error) {
+      log(`Error in ApiKeyUseCase.setApiKey: ${error}`, 'application');
+      return {
+        success: false,
+        message: `An error occurred: ${error}`
+      };
+    }
+  }
+}
+
+/**
+ * Use case for chapter detection in text
  */
 export class ChapterDetectionUseCase {
   /**
-   * Detect chapters in text using AI and then fallback to regex patterns if AI fails
+   * Detect chapters in text content with AI assistance if available
    * 
    * @param text The text content to analyze
-   * @param userId The user ID (to retrieve their API key)
-   * @returns A ChunkingResult with AI-detected chapters or regex-detected chapters
+   * @param useAI Whether to attempt AI-powered detection
+   * @returns Chunking result with chapters and metadata
    */
-  async detectChapters(text: string, userId: string): Promise<ChunkingResult> {
+  async detectChapters(text: string, useAI: boolean = true): Promise<ChunkingResult> {
     try {
-      // First, try to get the user's Google AI API key
-      const apiKey = await storage.getApiKeyByUserAndService(userId, 'google-ai');
-      
-      if (!apiKey || !apiKey.apiKey) {
-        console.log('No Google AI API key found for user, falling back to regex detection');
-        // No API key, so use traditional chunking
-        const chunkingResult = await this.fallbackToRegexDetection(text);
-        return {
-          ...chunkingResult,
-          aiDetection: false
-        };
+      // Check if we should try AI detection
+      if (useAI) {
+        // Use the service to detect chapters
+        return await chapterService.detectChapters(text);
+      } else {
+        // Skip AI detection and use only pattern matching
+        log('Skipping AI detection as requested', 'application');
+        return chapterService.detectChapters(text);
       }
-      
-      console.log('Found Google AI API key, attempting AI-powered chapter detection');
-      
-      // Track the AI detection usage in analytics
-      await storage.updateAnalytics({ aiDetections: 1 });
-      
-      // Use the AI service to detect chapters
-      const aiResult: ChapterDetectionResult = await aiService.detectChapters(text, apiKey.apiKey);
-      
-      if (!aiResult.success || aiResult.chapters.length < 2) {
-        console.log('AI detection failed or found too few chapters, falling back to regex detection');
-        // AI detection failed, so use traditional chunking
-        const chunkingResult = await this.fallbackToRegexDetection(text);
-        return {
-          ...chunkingResult,
-          aiDetection: true
-        };
-      }
-      
-      // Convert the AI detection result to our ChunkingResult format
-      return convertAIDetectionToChapters(aiResult.chapters, text);
     } catch (error) {
-      console.error('Error in AI chapter detection use case:', error);
+      log(`Error in ChapterDetectionUseCase.detectChapters: ${error}`, 'application');
       
-      // On error, fall back to regex detection
-      const chunkingResult = await this.fallbackToRegexDetection(text);
+      // Return a fallback single chapter on error
       return {
-        ...chunkingResult,
+        chapters: [{
+          title: 'Chapter 1',
+          text: text
+        }],
+        wasChunked: false,
+        originalText: text,
+        patternMatchCounts: {},
         aiDetection: false
       };
     }
   }
-  
-  /**
-   * Fallback to regex-based chapter detection
-   * 
-   * @param text The text content to analyze
-   * @returns A ChunkingResult with regex-detected chapters
-   */
-  private async fallbackToRegexDetection(text: string): Promise<ChunkingResult> {
-    // Import the chunkByChapter function dynamically to avoid circular dependencies
-    const { chunkByChapter } = await import('../../client/src/lib/chapterDetection');
-    return chunkByChapter(text);
-  }
 }
 
+// Export singleton instances
+export const apiKeyUseCase = new ApiKeyUseCase();
 export const chapterDetectionUseCase = new ChapterDetectionUseCase();
-
-/**
- * Get all available voices
- */
-export async function getVoicesUseCase(): Promise<Voice[]> {
-  return storage.getVoices();
-}
-
-/**
- * Process text from a file or direct input
- */
-export async function processTextUseCase(params: {
-  file?: Express.Multer.File;
-  directText?: string;
-}): Promise<{ text: string; wasChunked: boolean; chapters?: any[] }> {
-  // This is a stub - in a real implementation, we would process the file
-  // and extract text content using appropriate libraries
-  let text = '';
-  
-  if (params.file) {
-    // For MVP, assume the file contains plain text
-    text = params.file.buffer.toString('utf-8');
-    
-    // Update analytics
-    await storage.updateAnalytics({ 
-      fileUploads: 1,
-      characterCount: text.length
-    });
-  } else if (params.directText) {
-    text = params.directText;
-    
-    // Update analytics
-    await storage.updateAnalytics({ 
-      textInputs: 1,
-      characterCount: text.length
-    });
-  }
-  
-  return {
-    text,
-    wasChunked: false
-  };
-}
-
-/**
- * Generate audiobook from text content
- */
-export async function generateAudiobookUseCase(data: TextToSpeechRequest): Promise<any[]> {
-  // This is a stub - in a real implementation, we would convert text to speech
-  // using ElevenLabs or another TTS service
-  
-  // Update analytics
-  await storage.updateAnalytics({ 
-    conversions: 1
-  });
-  
-  return data.chapters.map((chapter, index) => ({
-    id: index,
-    title: chapter.title,
-    audioUrl: `/audio/demo-${index}.mp3`,
-    duration: Math.floor(chapter.text.length / 20) // Rough estimate
-  }));
-}
-
-/**
- * Get analytics data
- */
-export async function getAnalyticsUseCase() {
-  return storage.getAnalytics();
-}

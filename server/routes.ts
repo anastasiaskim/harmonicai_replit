@@ -13,18 +13,12 @@ import { storage } from "./storage";
 
 // Import application layer
 import { 
-  getVoicesUseCase, 
-  processTextUseCase, 
-  generateAudiobookUseCase,
-  getAnalyticsUseCase,
+  apiKeyUseCase,
   chapterDetectionUseCase
 } from "./application/useCases";
 
 // Import infrastructure services
-import { fileService } from "./infrastructure/fileService";
 import { chapterService } from "./infrastructure/chapterService";
-import { audioService } from "./infrastructure/audioService";
-import { storageService } from "./infrastructure/storageService";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -281,19 +275,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/detect-chapters", async (req: Request, res: Response) => {
     try {
       console.log("Received AI chapter detection request");
-      const { text, userId = "default" } = req.body;
+      const { text, useAI = true } = req.body;
       
-      // Validate request
-      if (!text || typeof text !== 'string') {
-        return res.status(400).json({ error: "Text content is required" });
+      // Validate request using our schema
+      try {
+        const validatedData = chapterDetectionSchema.parse({ text, useAI });
+        
+        // Use the AI-powered chapter detection use case
+        console.log("Calling AI-powered chapter detection use case");
+        const result = await chapterDetectionUseCase.detectChapters(validatedData.text, validatedData.useAI);
+        console.log(`Detection result: ${result.chapters.length} chapters detected, wasChunked=${result.wasChunked}, usedAI=${result.aiDetection}`);
+        
+        return res.json(result);
+      } catch (validationError) {
+        if (validationError instanceof ZodError) {
+          const readableError = fromZodError(validationError);
+          return res.status(400).json({ error: readableError.message });
+        }
+        throw validationError;
       }
-      
-      // Use the AI-powered chapter detection
-      console.log("Calling AI-powered chapter detection use case");
-      const result = await chapterDetectionUseCase.detectChapters(text, userId);
-      console.log(`AI detection result: ${result.chapters.length} chapters detected, wasChunked=${result.wasChunked}, usedAI=${result.aiDetection}`);
-      
-      return res.json(result);
     } catch (error) {
       console.error("AI chapter detection error:", error);
       if (error instanceof Error) {
@@ -306,23 +306,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // API Key management
   app.post("/api/api-keys", async (req: Request, res: Response) => {
     try {
-      const { userId, service, apiKey } = req.body;
+      const { service, key } = req.body;
       
-      // Validate request
-      if (!userId || typeof userId !== 'string') {
-        return res.status(400).json({ error: "User ID is required" });
+      // Validate request using our schema
+      try {
+        const validatedData = apiKeySchema.parse({ service, key });
+        
+        // Use the API key use case to validate and store the key
+        const result = await apiKeyUseCase.setApiKey(validatedData.service, validatedData.key);
+        
+        return res.json(result);
+      } catch (validationError) {
+        if (validationError instanceof ZodError) {
+          const readableError = fromZodError(validationError);
+          return res.status(400).json({ error: readableError.message });
+        }
+        throw validationError;
       }
-      
-      if (!service || typeof service !== 'string') {
-        return res.status(400).json({ error: "Service name is required" });
-      }
-      
-      if (!apiKey || typeof apiKey !== 'string') {
-        return res.status(400).json({ error: "API key is required" });
-      }
-      
-      // Check if an API key already exists for this user/service
-      const existingKey = await storage.getApiKeyByUserAndService(userId, service);
       
       if (existingKey) {
         // Update existing API key

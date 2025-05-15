@@ -49,9 +49,9 @@ export class AIService {
       // Get the API key from storage
       const apiKey = await storage.getApiKeyByUserAndService(this.userId, 'google_ai');
       
-      if (apiKey && apiKey.key) {
-        this.cachedApiKey = apiKey.key;
-        return apiKey.key;
+      if (apiKey && apiKey.apiKey) {
+        this.cachedApiKey = apiKey.apiKey;
+        return apiKey.apiKey;
       }
       
       return null;
@@ -88,8 +88,8 @@ export class AIService {
       if (existingKey) {
         // Update the existing key
         const updatedKey = await storage.updateApiKey(existingKey.id, {
-          key,
-          updatedAt: new Date()
+          apiKey: key,
+          updatedAt: new Date().toISOString()
         });
         
         if (updatedKey) {
@@ -101,9 +101,9 @@ export class AIService {
         const newKey = await storage.insertApiKey({
           userId: this.userId,
           service: 'google_ai',
-          key,
-          createdAt: new Date(),
-          updatedAt: new Date()
+          apiKey: key,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         });
         
         this.cachedApiKey = key;
@@ -189,7 +189,8 @@ export class AIService {
           const responseText = response.data.candidates[0]?.content?.parts[0]?.text || '';
           
           // Extract the JSON from the response
-          const jsonMatch = responseText.match(/(\[.*\])/s);
+          // Using a regex that works in ES2015+ to match JSON array across multiple lines
+          const jsonMatch = responseText.match(/(\[[\s\S]*\])/);
           
           if (jsonMatch && jsonMatch[1]) {
             try {
