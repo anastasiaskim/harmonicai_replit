@@ -242,6 +242,14 @@ const Home = () => {
               error={error}
             />
             
+            {/* Show chapter download section when chapters are available */}
+            {chapters.length > 0 && (
+              <ChapterDownloadSection
+                chapters={chapters}
+                bookTitle={bookTitle}
+              />
+            )}
+            
             {generatedChapters.length > 0 && (
               <ChaptersSection chapters={generatedChapters} />
             )}
