@@ -2,19 +2,24 @@
  * Application Layer: Use Cases
  * Orchestrates the application logic by coordinating domain and infrastructure components
  */
-import { storage } from '../storage';
-import { fileService } from '../infrastructure/fileService';
-import { chapterService } from '../infrastructure/chapterService';
-import { audioService } from '../infrastructure/audioService';
-import { TextToSpeechRequest, Voice } from '@shared/schema';
+import { createInsertSchema } from "drizzle-zod";
+import { 
+  TextToSpeechRequest, 
+  Voice, 
+  InsertChapter, 
+  insertChapterSchema,
+  Chapter
+} from "@shared/schema";
+import { storage } from "../storage";
+import { fileService, FileProcessingResult } from "../infrastructure/fileService";
+import { chapterService, ChapterDTO } from "../infrastructure/chapterService";
+import { audioService } from "../infrastructure/audioService";
 
-// Interface for file upload input
 export interface ProcessTextInput {
   file?: any; // Multer file
   directText?: string;
 }
 
-// File metadata interface
 export interface FileMetadata {
   key: string;
   name: string;
@@ -23,7 +28,6 @@ export interface FileMetadata {
   mimeType: string;
 }
 
-// Interface for text processing output
 export interface ProcessTextOutput {
   text: string;
   chapters: { title: string; text: string }[];
@@ -44,98 +48,92 @@ export async function getVoicesUseCase(): Promise<Voice[]> {
  * Handles text processing from file uploads or direct text input
  */
 export async function processTextUseCase(input: ProcessTextInput): Promise<ProcessTextOutput> {
-  let text = '';
-  let fileType = 'direct';
-  let fileMetadata = null;
-
-  // Process file or use direct text
-  if (input.file) {
-    // Use the new uploadAndExtractText method that stores the file
-    const extractionResult = await fileService.uploadAndExtractText(input.file);
+  try {
+    let result: FileProcessingResult;
+    let fileMetadata: FileMetadata | null = null;
     
-    text = extractionResult.text;
-    fileType = extractionResult.fileType;
-    fileMetadata = {
-      key: extractionResult.fileInfo.key,
-      name: extractionResult.fileInfo.fileName,
-      size: extractionResult.fileInfo.size,
-      url: extractionResult.fileInfo.fileUrl,
-      mimeType: extractionResult.fileInfo.mimeType
+    if (input.file) {
+      // Process uploaded file
+      const textExtractionResult = await fileService.uploadAndExtractText(input.file);
+      
+      // Create file metadata for frontend
+      fileMetadata = {
+        key: textExtractionResult.fileInfo.key,
+        name: textExtractionResult.fileInfo.fileName,
+        size: textExtractionResult.fileInfo.size,
+        url: textExtractionResult.fileInfo.fileUrl,
+        mimeType: textExtractionResult.fileInfo.mimeType
+      };
+      
+      result = {
+        text: textExtractionResult.text,
+        fileType: textExtractionResult.fileType
+      };
+      
+      // Update analytics
+      await fileService.updateFileAnalytics(
+        textExtractionResult.fileType, 
+        textExtractionResult.charCount
+      );
+    } else if (input.directText) {
+      // Process direct text input
+      result = {
+        text: input.directText,
+        fileType: 'text'
+      };
+    } else {
+      throw new Error("No file or text provided");
+    }
+    
+    // Detect chapters in the text
+    const chapters = chapterService.detectChapters(result.text);
+    
+    return {
+      text: result.text,
+      chapters: chapters,
+      charCount: result.text.length,
+      fileMetadata: fileMetadata
     };
-  } else if (input.directText) {
-    text = input.directText;
-    
-    // For direct text input, we don't update analytics here
-    // since there's no file to track
-  } else {
-    throw new Error('No file or text provided');
+  } catch (error) {
+    console.error("Error in processTextUseCase:", error);
+    throw error;
   }
-
-  // Enforce character limit
-  if (text.length > 50000) {
-    text = text.substring(0, 50000);
-  }
-
-  // Detect chapters in the text
-  const chapters = chapterService.detectChapters(text);
-
-  // Return text, chapters, character count, and file metadata if available
-  return {
-    text,
-    chapters,
-    charCount: text.length,
-    fileMetadata
-  };
 }
 
 /**
  * Use Case: Generate Audiobook
  * Coordinates the process of converting text to speech and storing the results
  */
-export async function generateAudiobookUseCase(request: TextToSpeechRequest) {
-  const { voice, chapters } = request;
-
-  // Validate request
-  if (!voice) {
-    throw new Error('Voice selection is required');
-  }
-
-  if (chapters.length === 0) {
-    throw new Error('No chapters provided');
-  }
-
-  // Verify the voice exists
-  const voiceData = await storage.getVoiceByVoiceId(voice);
-  if (!voiceData) {
-    throw new Error('Invalid voice selection');
-  }
-
-  // Process each chapter
-  const processedChapters = [];
-  for (const chapter of chapters) {
-    try {
-      // Generate audio for this chapter
-      const chapterData = await audioService.generateAudio(chapter, voice);
+export async function generateAudiobookUseCase(request: TextToSpeechRequest): Promise<Chapter[]> {
+  try {
+    const { chapters: textChapters, voice } = request;
+    const generatedChapters: InsertChapter[] = [];
+    
+    // Process each chapter
+    for (const chapter of textChapters) {
+      const chapterData: ChapterDTO = {
+        title: chapter.title,
+        text: chapter.text
+      };
       
-      // Store chapter in database
-      const insertedChapter = await storage.insertChapter(chapterData);
+      // Generate audio for the chapter
+      const processedChapter = await audioService.generateAudio(
+        chapterData, 
+        voice,
+        true // Enable real API call
+      );
       
-      processedChapters.push({
-        id: insertedChapter.id,
-        title: insertedChapter.title,
-        audioUrl: insertedChapter.audioUrl,
-        duration: insertedChapter.duration,
-        size: insertedChapter.size
-      });
-    } catch (error) {
-      console.error(`Error processing chapter "${chapter.title}":`, error);
+      generatedChapters.push(processedChapter);
     }
+    
+    // Store chapters in database
+    const storedChapters = await storage.insertChapters(generatedChapters);
+    
+    return storedChapters;
+  } catch (error) {
+    console.error("Error in generateAudiobookUseCase:", error);
+    throw error;
   }
-
-  // Update voice usage analytics
-  await audioService.updateVoiceAnalytics(voice);
-
-  return processedChapters;
 }
 
 /**
@@ -143,5 +141,19 @@ export async function generateAudiobookUseCase(request: TextToSpeechRequest) {
  * Retrieves usage analytics
  */
 export async function getAnalyticsUseCase() {
-  return storage.getAnalytics();
+  try {
+    const analytics = await storage.getAnalytics();
+    return analytics || {
+      id: 0,
+      fileUploads: 0,
+      textInputs: 0,
+      conversions: 0,
+      characterCount: 0,
+      fileTypes: {},
+      voiceUsage: {}
+    };
+  } catch (error) {
+    console.error("Error in getAnalyticsUseCase:", error);
+    throw error;
+  }
 }

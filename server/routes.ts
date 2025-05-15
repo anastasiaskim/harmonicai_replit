@@ -131,6 +131,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(500).json({ error: "Failed to generate audio" });
     }
   });
+  
+  // Edge Function: Convert text directly to audio
+  app.post("/api/convert-to-audio", async (req: Request, res: Response) => {
+    try {
+      const { text, voiceId, title } = req.body;
+      
+      // Validate request
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: "Text is required and must be a string" });
+      }
+      
+      if (!voiceId || typeof voiceId !== 'string') {
+        return res.status(400).json({ error: "VoiceId is required and must be a string" });
+      }
+      
+      if (!title || typeof title !== 'string') {
+        return res.status(400).json({ error: "Title is required and must be a string" });
+      }
+      
+      // Check if text is not too long (ElevenLabs has a 5000 character limit per request)
+      if (text.length > 5000) {
+        return res.status(400).json({ 
+          error: "Text is too long, maximum 5000 characters allowed per request" 
+        });
+      }
+      
+      // Generate audio with ElevenLabs API
+      const audioUrl = await audioService.convertTextToSpeech({
+        text,
+        voiceId,
+        title
+      });
+      
+      // Get file path and check if it exists
+      const fileName = path.basename(audioUrl);
+      const { exists, filePath } = audioService.getAudioFilePath(fileName);
+      
+      if (!exists) {
+        return res.status(500).json({ error: "Failed to generate audio file" });
+      }
+      
+      // Get file stats for additional metadata
+      const stats = fs.statSync(filePath);
+      const fileSizeInBytes = stats.size;
+      
+      // Estimate audio duration (1.5KB per second at 128kbps)
+      const estimatedDurationInSeconds = Math.ceil(fileSizeInBytes / 1500);
+      
+      // Return audio URL and metadata
+      res.json({
+        success: true,
+        audioUrl,
+        fileName,
+        fileSize: fileSizeInBytes,
+        duration: estimatedDurationInSeconds,
+        mimeType: 'audio/mpeg'
+      });
+    } catch (error) {
+      console.error("Convert-to-audio error:", error);
+      if (error instanceof Error) {
+        return res.status(500).json({ error: error.message });
+      }
+      return res.status(500).json({ error: "Failed to convert text to audio" });
+    }
+  });
 
   // Serve audio files (legacy endpoint)
   app.get("/api/audio/:filename", (req: Request, res: Response) => {

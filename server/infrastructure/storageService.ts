@@ -4,23 +4,6 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { createHash } from 'crypto';
-
-// Storage directory paths
-const STORAGE_DIR = path.resolve(process.cwd(), 'storage');
-const UPLOADS_DIR = path.join(STORAGE_DIR, 'uploads');
-const AUDIO_DIR = path.join(STORAGE_DIR, 'audio');
-
-// Ensure storage directories exist
-if (!fs.existsSync(STORAGE_DIR)) {
-  fs.mkdirSync(STORAGE_DIR, { recursive: true });
-}
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-if (!fs.existsSync(AUDIO_DIR)) {
-  fs.mkdirSync(AUDIO_DIR, { recursive: true });
-}
 
 export interface StoredFile {
   key: string;         // Unique identifier for the file (S3 key)
@@ -39,44 +22,36 @@ class StorageService {
    */
   async storeFile(
     fileBuffer: Buffer, 
-    fileName: string, 
-    mimeType: string,
-    directory: 'uploads' | 'audio' = 'uploads'
+    key: string, 
+    originalFileName: string, 
+    mimeType: string
   ): Promise<StoredFile> {
     try {
-      // Generate a unique key for the file
-      const fileHash = createHash('md5')
-        .update(fileBuffer)
-        .update(fileName)
-        .update(Date.now().toString())
-        .digest('hex');
+      // Get the directory from the key
+      const directory = path.dirname(key);
+      const localDirectory = path.join(process.cwd(), directory);
       
-      // Clean the filename
-      const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      // Ensure the directory exists
+      if (!fs.existsSync(localDirectory)) {
+        fs.mkdirSync(localDirectory, { recursive: true });
+      }
       
-      // Format: {directory}/{fileHash}_{cleanFileName}
-      const key = `${directory}/${fileHash}_${cleanFileName}`;
-      
-      // Determine the target directory
-      const targetDir = directory === 'audio' ? AUDIO_DIR : UPLOADS_DIR;
-      
-      // Create the full file path
-      const filePath = path.join(targetDir, `${fileHash}_${cleanFileName}`);
+      // Define the full path
+      const filePath = path.join(process.cwd(), key);
       
       // Write the file
       fs.writeFileSync(filePath, fileBuffer);
       
-      // Get the file size
+      // Get file size
       const stats = fs.statSync(filePath);
       
-      // Generate a URL to access the file
-      // In production this would be an S3 URL or a signed URL
-      const fileUrl = `/${directory}/${fileHash}_${cleanFileName}`;
+      // Create the URL for the file
+      // In a real implementation, this would be a CDN or S3 URL
+      const fileUrl = `/${key}`;
       
-      // Create and return the file metadata
       const storedFile: StoredFile = {
         key,
-        fileName: cleanFileName,
+        fileName: originalFileName,
         filePath,
         fileUrl,
         mimeType,
@@ -90,53 +65,27 @@ class StorageService {
       throw new Error('Failed to store file');
     }
   }
-  
+
   /**
    * Get a file from storage by its key
    */
   getFile(key: string): StoredFile | null {
     try {
-      // Parse the key to get directory and filename
-      const [directory, filename] = key.split('/');
+      const filePath = path.join(process.cwd(), key);
       
-      if (!directory || !filename) {
-        return null;
-      }
-      
-      // Determine the target directory
-      const targetDir = directory === 'audio' ? AUDIO_DIR : UPLOADS_DIR;
-      
-      // Create the full file path
-      const filePath = path.join(targetDir, filename);
-      
-      // Check if the file exists
       if (!fs.existsSync(filePath)) {
         return null;
       }
       
-      // Get the file stats
       const stats = fs.statSync(filePath);
+      const fileName = path.basename(key);
+      const mimeType = this.getMimeTypeFromKey(key);
       
-      // Get file MIME type based on extension
-      const extension = path.extname(filename).toLowerCase();
-      let mimeType = 'application/octet-stream';
-      
-      switch (extension) {
-        case '.txt':
-          mimeType = 'text/plain';
-          break;
-        case '.mp3':
-          mimeType = 'audio/mpeg';
-          break;
-        // Add more MIME types as needed
-      }
-      
-      // Create and return the file metadata
       const storedFile: StoredFile = {
         key,
-        fileName: filename,
+        fileName,
         filePath,
-        fileUrl: `/${directory}/${filename}`,
+        fileUrl: `/${key}`,
         mimeType,
         size: stats.size,
         createdAt: stats.birthtime.toISOString()
@@ -154,15 +103,15 @@ class StorageService {
    */
   getFileBuffer(key: string): Buffer | null {
     try {
-      const file = this.getFile(key);
+      const filePath = path.join(process.cwd(), key);
       
-      if (!file) {
+      if (!fs.existsSync(filePath)) {
         return null;
       }
       
-      return fs.readFileSync(file.filePath);
+      return fs.readFileSync(filePath);
     } catch (error) {
-      console.error('Error reading file buffer:', error);
+      console.error('Error getting file buffer:', error);
       return null;
     }
   }
@@ -173,21 +122,40 @@ class StorageService {
   serveFile(key: string): { buffer: Buffer; file: StoredFile } | null {
     try {
       const file = this.getFile(key);
-      
       if (!file) {
         return null;
       }
       
-      const buffer = fs.readFileSync(file.filePath);
+      const buffer = this.getFileBuffer(key);
+      if (!buffer) {
+        return null;
+      }
       
-      return {
-        buffer,
-        file
-      };
+      return { buffer, file };
     } catch (error) {
       console.error('Error serving file:', error);
       return null;
     }
+  }
+  
+  /**
+   * Infer MIME type from file key (extension)
+   */
+  private getMimeTypeFromKey(key: string): string {
+    const extension = path.extname(key).toLowerCase();
+    
+    const mimeTypes: Record<string, string> = {
+      '.txt': 'text/plain',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.mp3': 'audio/mpeg',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png'
+    };
+    
+    return mimeTypes[extension] || 'application/octet-stream';
   }
 }
 

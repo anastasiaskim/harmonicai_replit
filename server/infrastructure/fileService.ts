@@ -4,6 +4,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { storage } from '../storage';
 import { storageService, StoredFile } from './storageService';
 
@@ -29,40 +30,46 @@ class FileService {
    * For Phase 2, we only support .txt files
    */
   validateFile(file: any): boolean {
-    const { originalname, buffer, mimetype, size } = file;
+    if (!file) return false;
     
-    // Validate mimetype and extension
-    const isValidType = mimetype === "text/plain" || 
-                        originalname.toLowerCase().endsWith(".txt");
-    
-    if (!isValidType) {
-      throw new Error("Invalid file type. Only TXT files are supported.");
+    // Check file type (only txt for now)
+    const allowedTypes = ['text/plain'];
+    if (!allowedTypes.includes(file.mimetype)) {
+      throw new Error('Only .txt files are supported at this time');
     }
     
-    // Validate file size (5MB limit)
-    const MAX_SIZE = 5 * 1024 * 1024; // 5MB
-    if (size > MAX_SIZE) {
-      throw new Error(`File too large. Maximum file size is 5MB.`);
+    // Check file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      throw new Error('File size exceeds the 5MB limit');
     }
     
     return true;
   }
-
+  
   /**
    * Process an uploaded file and extract its content
    * For Phase 2, we only support .txt files
    */
   processFile(file: any): FileProcessingResult {
-    const { originalname, buffer, mimetype } = file;
+    if (!this.validateFile(file)) {
+      throw new Error('Invalid file');
+    }
     
-    // Validate the file
-    this.validateFile(file);
-    
-    // Extract text content from the file
-    const text = buffer.toString("utf-8");
-    const fileType = "txt";
-    
-    return { text, fileType };
+    try {
+      // Extract text from file (currently only supporting .txt)
+      const text = file.buffer.toString('utf-8');
+      
+      return {
+        text,
+        fileType: 'txt',
+        fileName: file.originalname,
+        fileSize: file.size
+      };
+    } catch (error) {
+      console.error('Error processing file:', error);
+      throw new Error('Failed to process file');
+    }
   }
   
   /**
@@ -71,31 +78,32 @@ class FileService {
    */
   async uploadAndExtractText(file: any): Promise<TextExtractionResult> {
     try {
-      // Validate and process file
-      this.validateFile(file);
+      // Process the file to extract text
+      const processedFile = this.processFile(file);
       
-      // Extract basic text content
-      const { text, fileType } = this.processFile(file);
+      // Generate a unique key for storage
+      const contentHash = createHash('md5').update(processedFile.text).digest('hex');
+      const fileKey = `uploads/${contentHash}_${file.originalname}`;
       
-      // Store the file
+      // Store the file in the simulated S3 storage
       const storedFile = await storageService.storeFile(
         file.buffer,
+        fileKey,
         file.originalname,
         file.mimetype
       );
       
       // Update analytics
-      await this.updateFileAnalytics(fileType, text.length);
+      await this.updateFileAnalytics('txt', processedFile.text.length);
       
-      // Return extracted text and file metadata
       return {
-        text,
+        text: processedFile.text,
         fileInfo: storedFile,
-        charCount: text.length,
-        fileType
+        charCount: processedFile.text.length,
+        fileType: 'txt'
       };
     } catch (error) {
-      console.error('Error uploading and extracting text:', error);
+      console.error('Error in uploadAndExtractText:', error);
       throw error;
     }
   }
@@ -107,16 +115,18 @@ class FileService {
     const analytics = await storage.getAnalytics();
     if (analytics) {
       // Create a safe copy of file types
-      const fileTypes = analytics.fileTypes as Record<string, number>;
-      const updatedFileTypes = { ...fileTypes };
-      updatedFileTypes[fileType] = (updatedFileTypes[fileType] || 0) + 1;
+      const fileTypesData = analytics.fileTypes as Record<string, number>;
+      const fileTypes = { ...fileTypesData };
+      fileTypes[fileType] = (fileTypes[fileType] || 0) + 1;
       
-      // Safely get the current character count
-      const totalChars = analytics.totalCharacters || 0;
+      // Safely get the current values
+      const fileUploads = analytics.fileUploads || 0;
+      const characterCount = analytics.characterCount || 0;
       
       await storage.updateAnalytics({
-        totalCharacters: totalChars + charCount,
-        fileTypes: updatedFileTypes
+        fileUploads: fileUploads + 1,
+        characterCount: characterCount + charCount,
+        fileTypes
       });
     }
   }
