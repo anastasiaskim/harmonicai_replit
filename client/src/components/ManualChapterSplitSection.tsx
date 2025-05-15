@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Card } from '@/components/ui/card';
-import { AlertTriangle, Scissors, Save, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Scissors, Save, Plus, Trash2, Wand2, BookOpen } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { parseSections, formatSectionContent } from '@/lib/textParser';
+import { CHAPTER_PATTERNS } from '@/lib/chapterDetection';
 
 interface Chapter {
   title: string;
@@ -25,7 +27,15 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
   const [chapters, setChapters] = useState<Chapter[]>([
     { title: 'Chapter 1', text: originalText || '' }
   ]);
+  const [isAutoDetecting, setIsAutoDetecting] = useState<boolean>(false);
   const { toast } = useToast();
+  
+  // Initialize with one chapter containing all the text
+  useEffect(() => {
+    if (originalText) {
+      setChapters([{ title: 'Chapter 1', text: originalText }]);
+    }
+  }, [originalText]);
 
   // Add a new chapter at the end
   const addChapter = () => {
@@ -77,6 +87,125 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
     setChapters(updatedChapters);
   };
 
+  // Try to automatically detect chapters based on common patterns
+  const tryAutoDetect = () => {
+    if (!originalText) return;
+    
+    setIsAutoDetecting(true);
+    
+    try {
+      // First try to detect sections using our parser
+      const { sections, patternMatches } = parseSections(originalText, CHAPTER_PATTERNS);
+      
+      // Convert the sections to chapters
+      const detectedChapters: Chapter[] = Object.entries(sections).map(([title, contentLines]) => ({
+        title,
+        text: formatSectionContent(contentLines)
+      }));
+      
+      // Only update if we found more than one section
+      if (detectedChapters.length > 1) {
+        setChapters(detectedChapters);
+        toast({
+          title: "Chapters Auto-Detected",
+          description: `Found ${detectedChapters.length} potential chapters in your text.`,
+        });
+      } else {
+        // If we couldn't find chapters through pattern matching, try a simpler split
+        const roughSplit = splitByHeuristics(originalText);
+        if (roughSplit.length > 1) {
+          setChapters(roughSplit);
+          toast({
+            title: "Basic Split Applied",
+            description: `Split text into ${roughSplit.length} equal parts. Review and adjust as needed.`,
+          });
+        } else {
+          toast({
+            title: "No Chapters Detected",
+            description: "Couldn't automatically detect chapters. Try splitting manually.",
+            variant: "destructive"
+          });
+        }
+      }
+    } catch (err) {
+      toast({
+        title: "Detection Failed",
+        description: "Error while trying to detect chapters. Try splitting manually.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsAutoDetecting(false);
+    }
+  };
+  
+  // Fallback approach: split text into roughly equal chunks
+  const splitByHeuristics = (text: string): Chapter[] => {
+    // If text is short, don't split
+    if (text.length < 2000) {
+      return [{ title: 'Chapter 1', text }];
+    }
+    
+    // Determine how many chunks to create based on text length
+    const chunkCount = Math.min(
+      Math.max(2, Math.floor(text.length / 5000)),
+      10
+    );
+    
+    // Split into roughly equal chunks
+    const chunkSize = Math.ceil(text.length / chunkCount);
+    const chunks: Chapter[] = [];
+    
+    let currentPosition = 0;
+    for (let i = 0; i < chunkCount; i++) {
+      // Try to find a natural break point (paragraph or sentence end)
+      let endPosition = Math.min(currentPosition + chunkSize, text.length);
+      
+      // If we're not at the end, try to find a paragraph break
+      if (endPosition < text.length) {
+        // Look for paragraph break within 20% of ideal chunk size
+        const searchWindowStart = Math.max(
+          currentPosition + Math.floor(chunkSize * 0.8),
+          currentPosition + 100
+        );
+        const searchWindowEnd = Math.min(
+          currentPosition + Math.ceil(chunkSize * 1.2),
+          text.length
+        );
+        
+        const searchArea = text.substring(searchWindowStart, searchWindowEnd);
+        
+        // Look for double newline (paragraph break)
+        const paragraphBreak = searchArea.indexOf('\n\n');
+        if (paragraphBreak !== -1) {
+          endPosition = searchWindowStart + paragraphBreak + 2;
+        } else {
+          // Look for a single newline
+          const lineBreak = searchArea.indexOf('\n');
+          if (lineBreak !== -1) {
+            endPosition = searchWindowStart + lineBreak + 1;
+          } else {
+            // Look for a sentence end (period, question mark, exclamation)
+            const sentenceMatch = searchArea.match(/[.!?]\s/);
+            if (sentenceMatch && sentenceMatch.index !== undefined) {
+              endPosition = searchWindowStart + sentenceMatch.index + 2;
+            }
+          }
+        }
+      }
+      
+      // Extract the chunk
+      const chunkText = text.substring(currentPosition, endPosition).trim();
+      chunks.push({
+        title: `Chapter ${i + 1}`,
+        text: chunkText
+      });
+      
+      currentPosition = endPosition;
+    }
+    
+    return chunks;
+  };
+  
   // Save the manual split
   const saveSplit = () => {
     if (chapters.some(chapter => !chapter.text.trim())) {
@@ -118,6 +247,16 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
           <Button 
             variant="outline" 
             size="sm"
+            onClick={tryAutoDetect}
+            disabled={isAutoDetecting}
+            className="text-xs"
+          >
+            <Wand2 className="h-3.5 w-3.5 mr-1" />
+            {isAutoDetecting ? 'Detecting...' : 'Auto Detect'}
+          </Button>
+          <Button 
+            variant="outline" 
+            size="sm"
             onClick={addChapter}
             className="text-xs"
           >
@@ -132,6 +271,16 @@ const ManualChapterSplitSection: React.FC<ManualChapterSplitSectionProps> = ({
             <Save className="h-3.5 w-3.5 mr-1" />
             Save Chapters
           </Button>
+        </div>
+      </div>
+      
+      <div className="mb-4 text-xs text-gray-500">
+        <div className="flex items-center">
+          <BookOpen className="h-3.5 w-3.5 mr-1 text-gray-400" />
+          <span>
+            <span className="font-medium">Tip:</span> Try the "Auto Detect" button to find chapter boundaries, 
+            then adjust as needed. You can also split text manually or add more chapters.
+          </span>
         </div>
       </div>
 
