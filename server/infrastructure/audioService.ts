@@ -99,28 +99,37 @@ class AudioService {
       // Create necessary directories
       ensureDirectoryExists(audioDir);
       
-      // Import the ElevenLabs SDK using dynamic import
-      const elevenlabs = await import('elevenlabs');
-      console.log("Loaded ElevenLabs SDK");
+      // Rather than using the SDK, we'll use a direct API call with axios
+      console.log(`Making direct API call to ElevenLabs API for voice ${elevenLabsVoiceId}`);
       
-      // Create client with API key
-      const client = new elevenlabs.ElevenLabsClient({
-        apiKey: this.elevenLabsConfig.apiKey,
-      });
+      const url = `${this.elevenLabsConfig.apiUrl}/text-to-speech/${elevenLabsVoiceId}`;
+      console.log(`Sending request to: ${url}`);
       
-      console.log(`Generating audio with voice ID: ${elevenLabsVoiceId}`);
-      
-      // Convert text to speech using the SDK
-      const audioResponse = await client.textToSpeech({
-        voiceId: elevenLabsVoiceId,
-        text: text,
-        model_id: "eleven_monolingual_v1",
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.5
+      const response = await axios.post(
+        url,
+        {
+          text,
+          model_id: "eleven_multilingual_v2", // Using the latest model
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.5
+          }
         },
-        output_format: "mp3_44100_128"
-      });
+        {
+          headers: {
+            'Accept': 'audio/mpeg',
+            'xi-api-key': this.elevenLabsConfig.apiKey,
+            'Content-Type': 'application/json'
+          },
+          responseType: 'arraybuffer'
+        }
+      );
+      
+      console.log(`ElevenLabs API response status: ${response.status}`);
+      console.log(`Response data length: ${response.data?.length || 0} bytes`);
+      
+      // Save the audio file
+      const audioResponse = response.data;
       
       console.log(`Received audio response, type: ${typeof audioResponse}`);
       
