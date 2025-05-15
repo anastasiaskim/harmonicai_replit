@@ -29,7 +29,9 @@ export const apiKeys = pgTable("api_keys", {
   userId: text("user_id").notNull(),  // Will use a simple user identifier for now
   service: text("service").notNull(),  // 'google_ai', 'elevenlabs', etc.
   apiKey: text("api_key").notNull(),
+  isValid: boolean("is_valid").default(false),
   isActive: boolean("is_active").default(true),
+  lastValidated: text("last_validated").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
@@ -66,7 +68,9 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).pick({
   userId: true,
   service: true,
   apiKey: true,
+  isValid: true,
   isActive: true,
+  lastValidated: true,
   createdAt: true,
   updatedAt: true,
 });

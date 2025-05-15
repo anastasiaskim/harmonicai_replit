@@ -160,7 +160,8 @@ export class MemStorage implements IStorage {
     const newApiKey: ApiKey = { 
       id, 
       ...apiKey,
-      isActive: apiKey.isActive === undefined ? true : apiKey.isActive 
+      isValid: apiKey.isValid === undefined ? false : apiKey.isValid,
+      isActive: apiKey.isActive === undefined ? true : apiKey.isActive
     };
     this.apiKeysData.set(id, newApiKey);
     return newApiKey;

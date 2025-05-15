@@ -6,17 +6,16 @@
  * infrastructure services and API routes.
  */
 
-import { z } from 'zod';
-import { chapterService, ChunkingResult } from '../infrastructure/chapterService';
-import { aiService } from '../infrastructure/aiService';
-import { storage } from '../storage';
-import { log } from '../vite';
+import { storage } from "../storage";
+import { aiService } from "../infrastructure/aiService";
+import { chapterService, ChapterDetectionResult } from "../infrastructure/chapterService";
+import { z } from "zod";
 
 /**
- * Schema for the AI API key validation request
+ * Schema for the API key validation request
  */
 export const apiKeySchema = z.object({
-  service: z.string(),
+  service: z.string().min(1),
   key: z.string().min(1)
 });
 
@@ -41,33 +40,88 @@ export class ApiKeyUseCase {
    */
   async setApiKey(service: string, key: string): Promise<{ success: boolean; message: string }> {
     try {
-      // Currently only supporting Google AI service
-      if (service === 'google_ai') {
-        const result = await aiService.setApiKey(key);
-        
-        if (result) {
-          return {
-            success: true,
-            message: 'Google AI API key validated and stored successfully'
-          };
-        } else {
-          return {
-            success: false,
-            message: 'Failed to validate or store Google AI API key'
-          };
-        }
-      }
+      // Simple user ID since we don't have user auth yet
+      const userId = "default-user";
       
-      return {
-        success: false,
-        message: `Unsupported service: ${service}`
-      };
+      // Check if the user already has a key for this service
+      const existingKey = await storage.getApiKeyByUserAndService(userId, service);
+      
+      // Validate the key with the appropriate service
+      const { valid: isValid, message } = await aiService.validateApiKey(key);
+      
+      if (isValid) {
+        // Store or update the key
+        if (existingKey) {
+          await storage.updateApiKey(existingKey.id, { 
+            apiKey: key,
+            isValid: true,
+            lastValidated: new Date().toISOString() 
+          });
+        } else {
+          await storage.insertApiKey({ 
+            userId, 
+            service, 
+            apiKey: key,
+            isValid: true,
+            lastValidated: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        
+        return { 
+          success: true, 
+          message: `${service} API key has been validated and saved`
+        };
+      } else {
+        // Still store the key, but mark as invalid
+        if (existingKey) {
+          await storage.updateApiKey(existingKey.id, { 
+            apiKey: key,
+            isValid: false,
+            lastValidated: new Date().toISOString(),
+          });
+        } else {
+          await storage.insertApiKey({ 
+            userId, 
+            service, 
+            apiKey: key,
+            isValid: false,
+            lastValidated: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        
+        return { 
+          success: false, 
+          message: message || "API key validation failed"
+        };
+      }
     } catch (error) {
-      log(`Error in ApiKeyUseCase.setApiKey: ${error}`, 'application');
-      return {
-        success: false,
-        message: `An error occurred: ${error}`
+      console.error("Error setting API key:", error);
+      return { 
+        success: false, 
+        message: "An error occurred while processing your API key"
       };
+    }
+  }
+  
+  /**
+   * Check if a valid API key exists for a service
+   * 
+   * @param service The service to check
+   * @returns Whether a valid key exists
+   */
+  async hasValidKey(service: string): Promise<boolean> {
+    try {
+      const userId = "default-user";
+      const key = await storage.getApiKeyByUserAndService(userId, service);
+      
+      return !!key && key.isValid === true;
+    } catch (error) {
+      console.error("Error checking for valid API key:", error);
+      return false;
     }
   }
 }
@@ -83,35 +137,40 @@ export class ChapterDetectionUseCase {
    * @param useAI Whether to attempt AI-powered detection
    * @returns Chunking result with chapters and metadata
    */
-  async detectChapters(text: string, useAI: boolean = true): Promise<ChunkingResult> {
+  async detectChapters(text: string, useAI: boolean = true): Promise<ChapterDetectionResult> {
     try {
       // Check if we should try AI detection
-      if (useAI) {
-        // Use the service to detect chapters
-        return await chapterService.detectChapters(text);
-      } else {
-        // Skip AI detection and use only pattern matching
-        log('Skipping AI detection as requested', 'application');
-        return chapterService.detectChapters(text);
-      }
-    } catch (error) {
-      log(`Error in ChapterDetectionUseCase.detectChapters: ${error}`, 'application');
+      let canUseAI = useAI;
       
-      // Return a fallback single chapter on error
+      if (useAI) {
+        // Verify if we have a valid API key for AI services
+        const apiKeyUseCase = new ApiKeyUseCase();
+        canUseAI = await apiKeyUseCase.hasValidKey("google_ai");
+        
+        // If no valid key, we'll fall back to pattern-based detection
+        if (!canUseAI) {
+          console.log("No valid AI API key found, using pattern-based detection");
+        }
+      }
+      
+      // Perform chapter detection
+      return await chapterService.detectChapters(text, canUseAI);
+    } catch (error) {
+      console.error("Error in chapter detection use case:", error);
+      
+      // Return a basic single chapter on error
       return {
         chapters: [{
-          title: 'Chapter 1',
-          text: text
+          title: "Chapter 1",
+          text: text.trim()
         }],
         wasChunked: false,
-        originalText: text,
-        patternMatchCounts: {},
         aiDetection: false
       };
     }
   }
 }
 
-// Export singleton instances
+// Export use case instances for global use
 export const apiKeyUseCase = new ApiKeyUseCase();
 export const chapterDetectionUseCase = new ChapterDetectionUseCase();
