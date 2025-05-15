@@ -9,12 +9,18 @@ import TextPreviewSection from '@/components/TextPreviewSection';
 import ChaptersSection from '@/components/ChaptersSection';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { AlertCircle } from 'lucide-react';
 
 type Chapter = {
   title: string;
   text: string;
+};
+
+type FileMetadata = {
+  key: string;
+  name: string;
+  size: number;
+  url: string;
+  mimeType: string;
 };
 
 type GeneratedChapter = {
@@ -28,6 +34,7 @@ type GeneratedChapter = {
 const Home = () => {
   const [text, setText] = React.useState<string>('');
   const [chapters, setChapters] = React.useState<Chapter[]>([]);
+  const [fileMetadata, setFileMetadata] = React.useState<FileMetadata | null>(null);
   const [selectedVoice, setSelectedVoice] = React.useState<string>('rachel');
   const [isGenerating, setIsGenerating] = React.useState<boolean>(false);
   const [generatedChapters, setGeneratedChapters] = React.useState<GeneratedChapter[]>([]);
@@ -42,12 +49,18 @@ const Home = () => {
 
   // Function to handle file uploads and text processing
   const handleTextProcessed = (
-    result: { text: string; chapters: Chapter[]; charCount: number } | null,
+    result: { 
+      text: string; 
+      chapters: Chapter[]; 
+      charCount: number;
+      fileMetadata?: FileMetadata | null;
+    } | null,
     error?: string
   ) => {
     if (result) {
       setText(result.text);
       setChapters(result.chapters);
+      setFileMetadata(result.fileMetadata || null);
       setError(null);
     } else if (error) {
       setError(error);
@@ -122,14 +135,6 @@ const Home = () => {
       <main className="container mx-auto px-4 md:px-6 py-8 flex-grow">
         <IntroSection />
         
-        {error && (
-          <Alert variant="destructive" className="mb-6">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Left Column - Input & Settings */}
           <div className="lg:col-span-5 space-y-6">
@@ -154,6 +159,8 @@ const Home = () => {
             <TextPreviewSection 
               text={text}
               chapters={chapters}
+              fileMetadata={fileMetadata}
+              error={error}
             />
             
             {generatedChapters.length > 0 && (
