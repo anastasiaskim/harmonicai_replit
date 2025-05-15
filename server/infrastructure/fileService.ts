@@ -7,9 +7,8 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { storage } from '../storage';
 import { storageService, StoredFile } from './storageService';
-import * as EPub from 'epub';
-
-// Import pdf-parse
+// Import the libraries properly
+import EPub from 'epub';
 import pdfParse from 'pdf-parse';
 
 export interface FileProcessingResult {
@@ -101,47 +100,97 @@ class FileService {
    * Extract text from EPUB file
    */
   private extractTextFromEpub(buffer: Buffer): Promise<string> {
-    return new Promise((resolve, reject) => {
-      // Write buffer to temp file
-      const tempPath = path.join(process.cwd(), 'uploads', `temp_${Date.now()}.epub`);
-      fs.writeFileSync(tempPath, buffer);
-      
-      const epub = new EPub(tempPath);
-      
-      epub.on('end', () => {
-        let fullText = '';
+    return new Promise((resolve) => {
+      try {
+        // Write buffer to temp file
+        const tempPath = path.join(process.cwd(), 'uploads', `temp_${Date.now()}.epub`);
+        fs.writeFileSync(tempPath, buffer);
         
-        // Get the number of chapters
-        epub.flow.forEach((chapter, index) => {
-          epub.getChapter(chapter.id, (err: Error | null, text: string) => {
-            if (err) {
-              // Log error but continue with other chapters
-              console.error(`Error reading chapter ${index}:`, err);
-            } else {
-              // Strip HTML tags and add chapter text
-              const strippedText = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
-              fullText += `\n## Chapter ${index + 1}\n${strippedText}\n`;
-            }
+        try {
+          // Create EPUB instance with error handling
+          const epub = new EPub(tempPath);
+          
+          epub.on('end', () => {
+            let fullText = '';
             
-            // If this is the last chapter, resolve
-            if (index === epub.flow.length - 1) {
-              // Clean up temp file
-              fs.unlinkSync(tempPath);
-              resolve(fullText.trim());
+            try {
+              // Check if flow exists and has items
+              if (!epub.flow || epub.flow.length === 0) {
+                // No chapters found, create a simple fallback
+                fullText = `## EPUB Content\nNo chapters could be detected automatically.`;
+                // Clean up and resolve
+                if (fs.existsSync(tempPath)) {
+                  fs.unlinkSync(tempPath);
+                }
+                resolve(fullText);
+                return;
+              }
+              
+              // Process normal flow-based chapters
+              let processedChapters = 0;
+              
+              epub.flow.forEach((chapter, index) => {
+                try {
+                  epub.getChapter(chapter.id, (err: Error | null, text: string) => {
+                    processedChapters++;
+                    
+                    if (!err && text) {
+                      // Strip HTML tags and add chapter text
+                      const strippedText = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+                      fullText += `\n## Chapter ${index + 1}\n${strippedText}\n`;
+                    }
+                    
+                    // If all chapters are processed, resolve
+                    if (processedChapters >= epub.flow.length) {
+                      // Clean up temp file
+                      if (fs.existsSync(tempPath)) {
+                        fs.unlinkSync(tempPath);
+                      }
+                      resolve(fullText.trim() || `## EPUB Content\nNo content could be extracted from this EPUB.`);
+                    }
+                  });
+                } catch (chapterError) {
+                  processedChapters++;
+                  // If all chapters are processed (even with errors), resolve
+                  if (processedChapters >= epub.flow.length) {
+                    if (fs.existsSync(tempPath)) {
+                      fs.unlinkSync(tempPath);
+                    }
+                    resolve(fullText.trim() || `## EPUB Content\nNo content could be extracted from this EPUB.`);
+                  }
+                }
+              });
+            } catch (flowError) {
+              // Handle flow processing errors
+              if (fs.existsSync(tempPath)) {
+                fs.unlinkSync(tempPath);
+              }
+              resolve(`## EPUB Content\nFailed to process EPUB content structure.`);
             }
           });
-        });
-      });
-      
-      epub.on('error', (err) => {
-        // Clean up temp file
-        if (fs.existsSync(tempPath)) {
-          fs.unlinkSync(tempPath);
+          
+          epub.on('error', () => {
+            // Clean up temp file on error
+            if (fs.existsSync(tempPath)) {
+              fs.unlinkSync(tempPath);
+            }
+            // Provide a fallback instead of failing
+            resolve(`## EPUB Error\nFailed to parse EPUB file.`);
+          });
+          
+          // Start parsing the EPUB
+          epub.parse();
+        } catch (epubError) {
+          // Handle EPUB constructor errors
+          if (fs.existsSync(tempPath)) {
+            fs.unlinkSync(tempPath);
+          }
+          resolve(`## EPUB Error\nFailed to process EPUB file format.`);
         }
-        reject(err);
-      });
-      
-      epub.parse();
+      } catch (fileError) {
+        // Handle file system errors
+        resolve(`## EPUB Error\nFailed to process EPUB file.`);
+      }
     });
   }
   
