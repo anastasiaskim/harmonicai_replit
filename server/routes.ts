@@ -9,13 +9,15 @@ import JSZip from "jszip";
 
 // Import domain layer
 import { textToSpeechSchema } from "@shared/schema";
+import { storage } from "./storage";
 
 // Import application layer
 import { 
   getVoicesUseCase, 
   processTextUseCase, 
   generateAudiobookUseCase,
-  getAnalyticsUseCase
+  getAnalyticsUseCase,
+  chapterDetectionUseCase
 } from "./application/useCases";
 
 // Import infrastructure services
@@ -275,19 +277,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  // Server-side chapter ZIP creation and download
-  app.post("/api/download", async (req: Request, res: Response) => {
+  // AI-powered chapter detection
+  app.post("/api/detect-chapters", async (req: Request, res: Response) => {
     try {
-      console.log("Received chapter download request");
-      const { text, bookTitle = "Untitled Book" } = req.body;
+      console.log("Received AI chapter detection request");
+      const { text, userId = "default" } = req.body;
       
       // Validate request
       if (!text || typeof text !== 'string') {
         return res.status(400).json({ error: "Text content is required" });
       }
       
-      // Detect chapters in the text with detailed information
-      const chunkingResult = chapterService.detectChaptersDetailed(text);
+      // Use the AI-powered chapter detection
+      console.log("Calling AI-powered chapter detection use case");
+      const result = await chapterDetectionUseCase.detectChapters(text, userId);
+      console.log(`AI detection result: ${result.chapters.length} chapters detected, wasChunked=${result.wasChunked}, usedAI=${result.aiDetection}`);
+      
+      return res.json(result);
+    } catch (error) {
+      console.error("AI chapter detection error:", error);
+      if (error instanceof Error) {
+        return res.status(500).json({ error: error.message });
+      }
+      return res.status(500).json({ error: "Failed to detect chapters with AI" });
+    }
+  });
+  
+  // API Key management
+  app.post("/api/api-keys", async (req: Request, res: Response) => {
+    try {
+      const { userId, service, apiKey } = req.body;
+      
+      // Validate request
+      if (!userId || typeof userId !== 'string') {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+      
+      if (!service || typeof service !== 'string') {
+        return res.status(400).json({ error: "Service name is required" });
+      }
+      
+      if (!apiKey || typeof apiKey !== 'string') {
+        return res.status(400).json({ error: "API key is required" });
+      }
+      
+      // Check if an API key already exists for this user/service
+      const existingKey = await storage.getApiKeyByUserAndService(userId, service);
+      
+      if (existingKey) {
+        // Update existing API key
+        const updated = await storage.updateApiKey(existingKey.id, {
+          apiKey,
+          updatedAt: new Date().toISOString(),
+          isActive: true
+        });
+        
+        return res.json({ 
+          success: true, 
+          message: "API key updated successfully",
+          key: {
+            userId: updated?.userId,
+            service: updated?.service,
+            isActive: updated?.isActive,
+            updatedAt: updated?.updatedAt
+          }
+        });
+      } else {
+        // Create new API key
+        const newKey = await storage.insertApiKey({
+          userId,
+          service,
+          apiKey,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          isActive: true
+        });
+        
+        return res.json({ 
+          success: true, 
+          message: "API key created successfully",
+          key: {
+            userId: newKey.userId,
+            service: newKey.service,
+            isActive: newKey.isActive,
+            updatedAt: newKey.updatedAt
+          }
+        });
+      }
+    } catch (error) {
+      console.error("API key management error:", error);
+      if (error instanceof Error) {
+        return res.status(500).json({ error: error.message });
+      }
+      return res.status(500).json({ error: "Failed to manage API key" });
+    }
+  });
+
+  // Server-side chapter ZIP creation and download
+  app.post("/api/download", async (req: Request, res: Response) => {
+    try {
+      console.log("Received chapter download request");
+      const { text, bookTitle = "Untitled Book", userId = "default" } = req.body;
+      
+      // Validate request
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: "Text content is required" });
+      }
+      
+      // Try AI-powered chapter detection first
+      let chunkingResult;
+      try {
+        console.log("Attempting AI-powered chapter detection");
+        chunkingResult = await chapterDetectionUseCase.detectChapters(text, userId);
+        console.log(`AI detection result: ${chunkingResult.chapters.length} chapters, wasChunked=${chunkingResult.wasChunked}, usedAI=${chunkingResult.aiDetection}`);
+      } catch (aiError) {
+        console.error("AI chapter detection failed, falling back to regex detection:", aiError);
+        // Fallback to regex-based chapter detection
+        chunkingResult = chapterService.detectChaptersDetailed(text);
+        console.log(`Fallback detection result: ${chunkingResult.chapters.length} chapters, wasChunked=${chunkingResult.wasChunked}`);
+      }
+      
       console.log(`Detected ${chunkingResult.chapters.length} chapters in the text`);
       console.log(`Was chunking successful? ${chunkingResult.wasChunked ? 'Yes' : 'No'}`);
       

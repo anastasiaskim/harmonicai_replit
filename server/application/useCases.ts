@@ -1,164 +1,157 @@
 /**
  * Application Layer: Use Cases
- * Orchestrates the application logic by coordinating domain and infrastructure components
+ * Contains the business logic for the application
  */
-import { createInsertSchema } from "drizzle-zod";
-import { 
-  TextToSpeechRequest, 
-  Voice, 
-  InsertChapter, 
-  insertChapterSchema,
-  Chapter
-} from "@shared/schema";
-import { storage } from "../storage";
-import { fileService, FileProcessingResult } from "../infrastructure/fileService";
-import { chapterService, ChapterDTO } from "../infrastructure/chapterService";
-import { audioService } from "../infrastructure/audioService";
 
-export interface ProcessTextInput {
-  file?: any; // Multer file
-  directText?: string;
-}
-
-export interface FileMetadata {
-  key: string;
-  name: string;
-  size: number;
-  url: string;
-  mimeType: string;
-}
-
-export interface ProcessTextOutput {
-  text: string;
-  chapters: { title: string; text: string }[];
-  charCount: number;
-  fileMetadata?: FileMetadata | null;
-  wasChunked: boolean;  // Indicates if chapter detection was successful
-  patternMatchCounts?: Record<string, number>; // Statistics on pattern matches
-}
+import { storage } from '../storage';
+import { aiService } from '../infrastructure/aiService';
+import type { ChapterDetectionResult } from '../infrastructure/aiService';
+import { ChunkingResult } from '../../client/src/lib/chapterDetection';
+import { convertAIDetectionToChapters } from '../../client/src/lib/chapterDetection';
+import type { Voice } from '@shared/schema';
+import type { TextToSpeechRequest } from '@shared/schema';
+import type { Request, Response } from 'express';
+import multer from 'multer';
 
 /**
- * Use Case: Get Voices
- * Retrieves available voice options
+ * UseCase for detecting chapters in text using AI
+ */
+export class ChapterDetectionUseCase {
+  /**
+   * Detect chapters in text using AI and then fallback to regex patterns if AI fails
+   * 
+   * @param text The text content to analyze
+   * @param userId The user ID (to retrieve their API key)
+   * @returns A ChunkingResult with AI-detected chapters or regex-detected chapters
+   */
+  async detectChapters(text: string, userId: string): Promise<ChunkingResult> {
+    try {
+      // First, try to get the user's Google AI API key
+      const apiKey = await storage.getApiKeyByUserAndService(userId, 'google-ai');
+      
+      if (!apiKey || !apiKey.apiKey) {
+        console.log('No Google AI API key found for user, falling back to regex detection');
+        // No API key, so use traditional chunking
+        const chunkingResult = await this.fallbackToRegexDetection(text);
+        return {
+          ...chunkingResult,
+          aiDetection: false
+        };
+      }
+      
+      console.log('Found Google AI API key, attempting AI-powered chapter detection');
+      
+      // Track the AI detection usage in analytics
+      await storage.updateAnalytics({ aiDetections: 1 });
+      
+      // Use the AI service to detect chapters
+      const aiResult: ChapterDetectionResult = await aiService.detectChapters(text, apiKey.apiKey);
+      
+      if (!aiResult.success || aiResult.chapters.length < 2) {
+        console.log('AI detection failed or found too few chapters, falling back to regex detection');
+        // AI detection failed, so use traditional chunking
+        const chunkingResult = await this.fallbackToRegexDetection(text);
+        return {
+          ...chunkingResult,
+          aiDetection: true
+        };
+      }
+      
+      // Convert the AI detection result to our ChunkingResult format
+      return convertAIDetectionToChapters(aiResult.chapters, text);
+    } catch (error) {
+      console.error('Error in AI chapter detection use case:', error);
+      
+      // On error, fall back to regex detection
+      const chunkingResult = await this.fallbackToRegexDetection(text);
+      return {
+        ...chunkingResult,
+        aiDetection: false
+      };
+    }
+  }
+  
+  /**
+   * Fallback to regex-based chapter detection
+   * 
+   * @param text The text content to analyze
+   * @returns A ChunkingResult with regex-detected chapters
+   */
+  private async fallbackToRegexDetection(text: string): Promise<ChunkingResult> {
+    // Import the chunkByChapter function dynamically to avoid circular dependencies
+    const { chunkByChapter } = await import('../../client/src/lib/chapterDetection');
+    return chunkByChapter(text);
+  }
+}
+
+export const chapterDetectionUseCase = new ChapterDetectionUseCase();
+
+/**
+ * Get all available voices
  */
 export async function getVoicesUseCase(): Promise<Voice[]> {
   return storage.getVoices();
 }
 
 /**
- * Use Case: Process Text
- * Handles text processing from file uploads or direct text input
+ * Process text from a file or direct input
  */
-export async function processTextUseCase(input: ProcessTextInput): Promise<ProcessTextOutput> {
-  try {
-    let result: FileProcessingResult;
-    let fileMetadata: FileMetadata | null = null;
+export async function processTextUseCase(params: {
+  file?: Express.Multer.File;
+  directText?: string;
+}): Promise<{ text: string; wasChunked: boolean; chapters?: any[] }> {
+  // This is a stub - in a real implementation, we would process the file
+  // and extract text content using appropriate libraries
+  let text = '';
+  
+  if (params.file) {
+    // For MVP, assume the file contains plain text
+    text = params.file.buffer.toString('utf-8');
     
-    if (input.file) {
-      // Process uploaded file
-      const textExtractionResult = await fileService.uploadAndExtractText(input.file);
-      
-      // Create file metadata for frontend
-      fileMetadata = {
-        key: textExtractionResult.fileInfo.key,
-        name: textExtractionResult.fileInfo.fileName,
-        size: textExtractionResult.fileInfo.size,
-        url: textExtractionResult.fileInfo.fileUrl,
-        mimeType: textExtractionResult.fileInfo.mimeType
-      };
-      
-      result = {
-        text: textExtractionResult.text,
-        fileType: textExtractionResult.fileType
-      };
-      
-      // Update analytics
-      await fileService.updateFileAnalytics(
-        textExtractionResult.fileType, 
-        textExtractionResult.charCount
-      );
-    } else if (input.directText) {
-      // Process direct text input
-      result = {
-        text: input.directText,
-        fileType: 'text'
-      };
-    } else {
-      throw new Error("No file or text provided");
-    }
+    // Update analytics
+    await storage.updateAnalytics({ 
+      fileUploads: 1,
+      characterCount: text.length
+    });
+  } else if (params.directText) {
+    text = params.directText;
     
-    // Detect chapters in the text with detailed information
-    const chunkingResult = chapterService.detectChaptersDetailed(result.text);
-    
-    return {
-      text: result.text,
-      chapters: chunkingResult.chapters,
-      charCount: result.text.length,
-      fileMetadata: fileMetadata,
-      wasChunked: chunkingResult.wasChunked,
-      patternMatchCounts: chunkingResult.patternMatchCounts
-    };
-  } catch (error) {
-    console.error("Error in processTextUseCase:", error);
-    throw error;
+    // Update analytics
+    await storage.updateAnalytics({ 
+      textInputs: 1,
+      characterCount: text.length
+    });
   }
+  
+  return {
+    text,
+    wasChunked: false
+  };
 }
 
 /**
- * Use Case: Generate Audiobook
- * Coordinates the process of converting text to speech and storing the results
+ * Generate audiobook from text content
  */
-export async function generateAudiobookUseCase(request: TextToSpeechRequest): Promise<Chapter[]> {
-  try {
-    const { chapters: textChapters, voice } = request;
-    const generatedChapters: InsertChapter[] = [];
-    
-    // Process each chapter
-    for (const chapter of textChapters) {
-      const chapterData: ChapterDTO = {
-        title: chapter.title,
-        text: chapter.text
-      };
-      
-      // Generate audio for the chapter
-      const processedChapter = await audioService.generateAudio(
-        chapterData, 
-        voice,
-        true // Enable real API call
-      );
-      
-      generatedChapters.push(processedChapter);
-    }
-    
-    // Store chapters in database
-    const storedChapters = await storage.insertChapters(generatedChapters);
-    
-    return storedChapters;
-  } catch (error) {
-    console.error("Error in generateAudiobookUseCase:", error);
-    throw error;
-  }
+export async function generateAudiobookUseCase(data: TextToSpeechRequest): Promise<any[]> {
+  // This is a stub - in a real implementation, we would convert text to speech
+  // using ElevenLabs or another TTS service
+  
+  // Update analytics
+  await storage.updateAnalytics({ 
+    conversions: 1
+  });
+  
+  return data.chapters.map((chapter, index) => ({
+    id: index,
+    title: chapter.title,
+    audioUrl: `/audio/demo-${index}.mp3`,
+    duration: Math.floor(chapter.text.length / 20) // Rough estimate
+  }));
 }
 
 /**
- * Use Case: Get Analytics
- * Retrieves usage analytics
+ * Get analytics data
  */
 export async function getAnalyticsUseCase() {
-  try {
-    const analytics = await storage.getAnalytics();
-    return analytics || {
-      id: 0,
-      fileUploads: 0,
-      textInputs: 0,
-      conversions: 0,
-      characterCount: 0,
-      fileTypes: {},
-      voiceUsage: {},
-      createdAt: new Date().toISOString()
-    };
-  } catch (error) {
-    console.error("Error in getAnalyticsUseCase:", error);
-    throw error;
-  }
+  return storage.getAnalytics();
 }

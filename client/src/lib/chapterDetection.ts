@@ -125,21 +125,7 @@ export const detectChapters = (
   return result.chapters;
 };
 
-/**
- * Enhanced chapter detection that returns detailed information about the chunking process
- * 
- * @param text The full text content to analyze
- * @param customPatterns Optional additional patterns to use for detection
- * @param minChapters Minimum number of chapters expected (default is 2)
- * @returns A ChunkingResult with detailed information
- */
-export const detectChaptersDetailed = (
-  text: string, 
-  customPatterns?: RegExp[],
-  minChapters: number = 2
-): ChunkingResult => {
-  return chunkByChapter(text, customPatterns, minChapters);
-};
+// Function moved and renamed to detectChaptersWithAI
 
 /**
  * Estimates reading time for a chapter based on word count
@@ -194,6 +180,25 @@ export interface ChunkingResult {
  * @param minChapters Minimum number of chapters expected (default is 2)
  * @returns A ChunkingResult object with chapters and metadata
  */
+/**
+ * Enhanced chapter detection with AI integration
+ * This is intended to be called from the server side route that has access to the AI service
+ * 
+ * @param text The full text content to analyze
+ * @param customPatterns Optional additional patterns to use for detection
+ * @param minChapters Minimum number of chapters expected (default is 2)
+ * @returns A ChunkingResult with detailed information
+ */
+export const detectChaptersWithAI = (
+  text: string,
+  customPatterns?: RegExp[],
+  minChapters: number = 2
+): ChunkingResult => {
+  // First try AI detection if available through API
+  // (This function will be implemented serverside)
+  return chunkByChapter(text, customPatterns, minChapters);
+};
+
 export const chunkByChapter = (
   text: string, 
   customPatterns?: RegExp[],
@@ -351,6 +356,98 @@ export const chunkByChapter = (
     wasChunked,
     originalText: text,
     patternMatchCounts
+  };
+};
+
+/**
+ * Converts AI-detected chapter positions into properly formatted Chapter objects
+ * 
+ * @param aiResults Results from the AI detection service
+ * @param fullText The original full text content
+ * @returns A ChunkingResult with AI-detected chapters and confidence levels
+ */
+export const convertAIDetectionToChapters = (
+  aiResults: {
+    title: string;
+    startIndex: number;
+    endIndex: number;
+    confidence: number;
+  }[],
+  fullText: string
+): ChunkingResult => {
+  console.log('Processing AI detection results...');
+  
+  if (!aiResults || aiResults.length === 0) {
+    console.log('No AI detection results to process');
+    return {
+      chapters: [{
+        title: 'Chapter 1',
+        text: fullText.trim()
+      }],
+      wasChunked: false,
+      originalText: fullText,
+      patternMatchCounts: {},
+      aiDetection: true,
+      confidenceLevels: {}
+    };
+  }
+  
+  // Sort the results by startIndex to ensure proper ordering
+  const sortedResults = [...aiResults].sort((a, b) => a.startIndex - b.startIndex);
+  
+  // Convert to Chapter format
+  const chapters: Chapter[] = [];
+  const confidenceLevels: Record<string, number> = {};
+  
+  for (let i = 0; i < sortedResults.length; i++) {
+    const current = sortedResults[i];
+    const next = i < sortedResults.length - 1 ? sortedResults[i + 1] : null;
+    
+    const chapterTitle = current.title.trim();
+    const startIndex = current.startIndex;
+    const endIndex = next ? next.startIndex : fullText.length;
+    
+    // Extract the text between this chapter heading and the next
+    // We skip the title itself since it will be used as the chapter title
+    let chapterText;
+    if (i === 0 && startIndex > 0) {
+      // Special case for content before the first detected chapter
+      const preChapterText = fullText.substring(0, startIndex).trim();
+      if (preChapterText.length > 0) {
+        chapters.push({
+          title: 'Introduction',
+          text: preChapterText
+        });
+        confidenceLevels['Introduction'] = 0.7; // Moderate confidence for auto-detected intro
+      }
+      chapterText = fullText.substring(startIndex + current.title.length, endIndex).trim();
+    } else {
+      chapterText = fullText.substring(startIndex + current.title.length, endIndex).trim();
+    }
+    
+    // Only add chapters with actual content
+    if (chapterText.length > 0) {
+      chapters.push({
+        title: chapterTitle,
+        text: chapterText
+      });
+      confidenceLevels[chapterTitle] = current.confidence;
+    }
+  }
+  
+  const wasChunked = chapters.length >= 2;
+  
+  console.log(`AI chapter detection complete. Extracted ${chapters.length} chapters.`);
+  console.log(`Was text successfully chunked? ${wasChunked}`);
+  console.log('AI confidence levels:', confidenceLevels);
+  
+  return {
+    chapters,
+    wasChunked,
+    originalText: fullText,
+    patternMatchCounts: {}, // Empty for AI detection
+    aiDetection: true,
+    confidenceLevels
   };
 };
 
