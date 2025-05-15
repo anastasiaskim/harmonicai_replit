@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import express, { type Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import * as fs from 'fs';
@@ -39,6 +39,9 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Serve static files from public directory
+  app.use(express.static('public'));
+  
   // API Endpoints (Presentation Layer for API)
   
   // Get available voices
