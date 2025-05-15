@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { formatFileSize } from '@/lib/fileHelpers';
-import { parseEpubFile, EpubParseResult } from '@/lib/epubParser';
+import { parseEpubFile, EpubParseResult } from '@/lib/epubParserJszip';
 import EpubPreviewSection from '@/components/EpubPreviewSection';
 
 interface ProcessedResult {

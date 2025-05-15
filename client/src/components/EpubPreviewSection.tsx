@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { BookOpen, List, FileText, ChevronRight } from 'lucide-react';
-import { EpubParseResult, EpubChapter } from '@/lib/epubParser';
+import { EpubParseResult, EpubChapter } from '@/lib/epubParserJszip';
 
 interface EpubPreviewSectionProps {
   epubData: EpubParseResult;
@@ -82,6 +82,27 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
           </div>
         </div>
         
+        {/* Metadata Information */}
+        <div className="bg-gray-50 p-3 rounded-md border border-gray-200 mb-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">Book Information</h3>
+          <div className="grid grid-cols-1 gap-1 text-xs">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Format:</span>
+              <span className="font-medium">EPUB</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Source:</span>
+              <span className="font-medium">
+                {epubData.chapters.some(ch => ch.id.startsWith('nav-')) ? 'NCX/OPF Metadata' : 'HTML Headings'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Chapters Detected:</span>
+              <span className="font-medium">{epubData.chapters.length}</span>
+            </div>
+          </div>
+        </div>
+        
         {/* Cover image */}
         {epubData.coverUrl && (
           <div className="mb-6 flex justify-center">
@@ -110,6 +131,16 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
           <TabsContent value="toc" className="pt-4">
             <ScrollArea className="h-60 rounded-md border p-4">
               <div className="space-y-1">
+                {/* Source indicator */}
+                <div className="bg-blue-50 text-blue-700 text-xs p-2 mb-2 rounded-md border border-blue-100">
+                  Source: {epubData.chapters.some(ch => ch.id.startsWith('nav-')) 
+                    ? 'NCX/OPF Metadata' 
+                    : epubData.chapters.some(ch => ch.id.startsWith('heading-'))
+                      ? 'HTML Headings'
+                      : 'Spine Items'
+                  }
+                </div>
+                
                 {epubData.chapters.map((chapter, index) => (
                   <div 
                     key={chapter.id || index}
@@ -128,6 +159,17 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                     <div className="flex items-center">
                       <ChevronRight className="h-4 w-4 mr-1 flex-shrink-0" />
                       <span className="text-sm truncate">{chapter.title}</span>
+                      
+                      {/* Show badge for heading-based chapters */}
+                      {chapter.id.startsWith('heading-') && (
+                        <span className={`ml-2 text-xs px-1 rounded ${
+                          selectedChapter?.id === chapter.id 
+                            ? 'bg-white bg-opacity-20 text-white' 
+                            : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          H{chapter.level + 1}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
