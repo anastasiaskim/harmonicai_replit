@@ -1,310 +1,83 @@
-import React from 'react';
-import Header from '@/components/Header';
-import Footer from '@/components/Footer';
-import IntroSection from '@/components/IntroSection';
-import FileUploadSection from '@/components/FileUploadSection';
-import VoiceSelectionSection from '@/components/VoiceSelectionSection';
-import GenerateSection from '@/components/GenerateSection';
-import { TextPreviewSection } from '@/components/TextPreviewSection';
+import { useState } from 'react';
+import { TextUploadSection } from '@/components/TextUploadSection';
 import { ChaptersSection } from '@/components/ChaptersSection';
-import QuickConversionSection from '@/components/QuickConversionSection';
-import ChapterDownloadSection from '@/components/ChapterDownloadSection';
-import { ManualChapterSplitSection } from '@/components/ManualChapterSplitSection';
-import { useToast } from '@/hooks/use-toast';
-import { useQuery } from '@tanstack/react-query';
-import { extractBookTitle } from '@/lib/chapterDetection';
+import { 
+  extractBookTitle, 
+  type Chapter, 
+  type ChunkingResult 
+} from '@/lib/chapterDetection';
 
-type Chapter = {
-  title: string;
-  text: string;
-};
-
-type FileMetadata = {
-  key: string;
-  name: string;
-  size: number;
-  url: string;
-  mimeType: string;
-};
-
-interface ProcessedResult {
-  text: string;
-  chapters: Chapter[];
-  charCount: number;
-  fileMetadata?: FileMetadata | null;
-  wasChunked: boolean;
-  patternMatchCounts?: Record<string, number>;
-}
-
-interface Voice {
-  id: number;
-  voiceId: string;
-  name: string;
-  description: string;
-  gender?: string;
-  accent?: string;
-  style?: string;
-}
-
-type GeneratedChapter = {
-  id: number;
-  title: string;
-  audioUrl: string;
-  duration: number; // in seconds
-  size: number; // in bytes
-};
-
-const Home = () => {
-  const [text, setText] = React.useState<string>('');
-  const [chapters, setChapters] = React.useState<Chapter[]>([]);
-  const [fileMetadata, setFileMetadata] = React.useState<FileMetadata | null>(null);
-  const [selectedVoice, setSelectedVoice] = React.useState<string>('rachel');
-  const [isGenerating, setIsGenerating] = React.useState<boolean>(false);
-  const [generatedChapters, setGeneratedChapters] = React.useState<GeneratedChapter[]>([]);
-  const [error, setError] = React.useState<string | null>(null);
-  const [bookTitle, setBookTitle] = React.useState<string>('Untitled Book');
-  const [wasChunked, setWasChunked] = React.useState<boolean>(true);
-  const [originalText, setOriginalText] = React.useState<string>('');
-
-  const { toast } = useToast();
-
-  // Fetch available voices from the API
-  const { data: voices, isLoading: isLoadingVoices } = useQuery({
-    queryKey: ['/api/voices'],
-  });
-
-  // Function to handle file uploads and text processing
-  const handleTextProcessed = async (
-    result: ProcessedResult | null,
-    error?: string
-  ) => {
-    if (result) {
-      setText(result.text);
-      setChapters(result.chapters);
-      setFileMetadata(result.fileMetadata || null);
-      setError(null);
-      setWasChunked(result.wasChunked);
-      setOriginalText(result.text);
-      
-      // Try to extract a book title from the text
-      const detectedTitle = extractBookTitle(result.text);
-      setBookTitle(detectedTitle);
-      
-      console.log(`Extracted book title: "${detectedTitle}"`);
-      console.log(`Detected ${result.chapters.length} chapters in the text`);
-      console.log(`Was chunking successful? ${result.wasChunked ? 'Yes' : 'No'}`);
-      
-      if (result.patternMatchCounts) {
-        console.log('Pattern match counts:', result.patternMatchCounts);
-      }
-      
-      // Show success message about extracted chapters
-      if (result.wasChunked) {
-        toast({
-          title: "Text Processing Complete",
-          description: `Extracted ${result.chapters.length} chapters from "${detectedTitle}"`,
-        });
-        
-        // Auto-convert the extracted text to speech if we have a valid file
-        if (result.text && result.chapters.length > 0) {
-          toast({
-            title: "Starting Audio Conversion",
-            description: "Now converting text to speech automatically...",
-          });
-          
-          // Trigger the audio generation
-          await handleGenerateAudiobook();
-        }
-      } else {
-        // If chapters couldn't be automatically detected
-        toast({
-          title: "Manual Chapters Needed",
-          description: "We couldn't automatically detect chapters. Please split your text manually.",
-          variant: "default",
-        });
-      }
-    } else if (error) {
-      setError(error);
-      toast({
-        title: "Error",
-        description: error,
-        variant: "destructive",
-      });
-    }
-  };
-
-  // Function to handle voice selection
-  const handleVoiceSelect = (voiceId: string) => {
-    setSelectedVoice(voiceId);
+export default function Home() {
+  const [step, setStep] = useState<'upload' | 'chapters' | 'voices'>('upload');
+  const [textContent, setTextContent] = useState<string>('');
+  const [fileName, setFileName] = useState<string>('');
+  const [bookTitle, setBookTitle] = useState<string>('');
+  const [chapterResult, setChapterResult] = useState<ChunkingResult | null>(null);
+  const [selectedChapters, setSelectedChapters] = useState<Chapter[]>([]);
+  
+  // Handle text upload
+  const handleTextLoaded = (text: string, name: string) => {
+    setTextContent(text);
+    setFileName(name);
+    
+    // Try to extract a book title
+    const extractedTitle = extractBookTitle(text);
+    setBookTitle(extractedTitle);
   };
   
-  // Function to handle manual chapter splitting
-  const handleManualSplit = (manualChapters: Chapter[]) => {
-    setChapters(manualChapters);
-    setWasChunked(true); // Now we consider the manual split as a successful chunking
-    
-    toast({
-      title: "Manual Split Complete",
-      description: `Created ${manualChapters.length} chapters manually.`,
-    });
+  // Handle chapter detection
+  const handleChaptersDetected = (result: ChunkingResult) => {
+    setChapterResult(result);
+    setStep('chapters');
   };
   
-  // Function to handle chapter selection from the TextPreviewSection
-  const handleChaptersSelected = (selectedChapters: Chapter[]) => {
-    setChapters(selectedChapters);
-    setWasChunked(true);
+  // Handle chapter selection
+  const handleSelectChapters = (chapters: Chapter[]) => {
+    setSelectedChapters(chapters);
+    setStep('voices');
     
-    toast({
-      title: "Chapters Selected",
-      description: `Selected ${selectedChapters.length} chapters for processing.`,
-    });
+    // For now, just log the selection
+    console.log('Selected chapters:', chapters);
   };
-
-  // Function to generate audiobook
-  const handleGenerateAudiobook = async () => {
-    // Check if we have content to convert
-    if (!text || chapters.length === 0) {
-      toast({
-        title: "No content",
-        description: "Please upload a file or paste text first.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Don't start another conversion if one is already in progress
-    if (isGenerating) {
-      toast({
-        title: "Processing",
-        description: "Conversion is already in progress. Please wait.",
-      });
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-    
-    // Temporary array to collect processed chapters
-    const processedChapters: GeneratedChapter[] = [];
-
-    try {
-      // Process each chapter individually to avoid the 50,000 character limit
-      toast({
-        title: "Processing Audiobook",
-        description: `Starting to process ${chapters.length} chapters...`,
-      });
-      
-      // Process chapters one by one to avoid size limitations
-      for (let i = 0; i < chapters.length; i++) {
-        const chapter = chapters[i];
-        
-        toast({
-          title: "Processing Chapter",
-          description: `Converting chapter ${i+1} of ${chapters.length}: "${chapter.title}"`,
-        });
-        
-        // Send individual chapter for processing
-        const response = await fetch('/api/convert-to-audio', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text: chapter.text,
-            voiceId: selectedVoice,
-            title: chapter.title,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            errorData.error || `Failed to generate audio for chapter "${chapter.title}"`
-          );
-        }
-
-        const chapterData = await response.json();
-        processedChapters.push(chapterData);
-        
-        // Update UI with progress
-        setGeneratedChapters([...processedChapters]);
-      }
-      
-      toast({
-        title: "Audiobook Generated",
-        description: `Successfully created ${processedChapters.length} audio chapters.`,
-      });
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate audiobook');
-      toast({
-        title: "Generation Failed",
-        description: err.message || 'An error occurred while generating the audiobook.',
-        variant: "destructive",
-      });
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
+  
   return (
-    <div className="min-h-screen bg-dark-50 flex flex-col">
-      <Header />
+    <div className="container max-w-6xl mx-auto px-4 py-8">
+      {step === 'upload' && (
+        <TextUploadSection 
+          onTextLoaded={handleTextLoaded}
+          onChaptersDetected={handleChaptersDetected}
+        />
+      )}
       
-      <main className="container mx-auto px-4 md:px-6 py-8 flex-grow">
-        <IntroSection />
-        
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Column - Input & Settings */}
-          <div className="lg:col-span-5 space-y-6">
-            <FileUploadSection onTextProcessed={handleTextProcessed} />
-            
-            <VoiceSelectionSection 
-              voices={(voices as Voice[]) || []} 
-              isLoading={isLoadingVoices}
-              selectedVoice={selectedVoice}
-              onVoiceSelect={handleVoiceSelect}
-            />
-            
-            <GenerateSection 
-              onGenerate={handleGenerateAudiobook}
-              isGenerating={isGenerating}
-              isDisabled={!text || chapters.length === 0}
-            />
-            
-            <QuickConversionSection
-              selectedVoice={selectedVoice}
-              onVoiceSelect={handleVoiceSelect}
-              voices={(voices as Voice[]) || []}
-            />
-          </div>
-          
-          {/* Right Column - Preview & Results */}
-          <div className="lg:col-span-7">
-            {text && (
-              <TextPreviewSection 
-                text={text}
-                onChaptersSelected={handleChaptersSelected}
-              />
+      {step === 'chapters' && chapterResult && (
+        <ChaptersSection
+          chapters={chapterResult.chapters}
+          wasChunked={chapterResult.wasChunked}
+          aiDetection={chapterResult.aiDetection}
+          confidenceLevels={chapterResult.confidenceLevels}
+          onSelectChapters={handleSelectChapters}
+        />
+      )}
+      
+      {step === 'voices' && (
+        <div className="text-center p-8">
+          <h2 className="text-2xl font-bold">Voice Selection</h2>
+          <p className="text-gray-500 mt-2">
+            This part would be implemented to select voices for conversion
+          </p>
+          <pre className="mt-6 text-left bg-gray-100 p-4 rounded text-sm">
+            {JSON.stringify(
+              {
+                bookTitle,
+                fileName,
+                chapterCount: selectedChapters.length,
+                totalWords: selectedChapters.reduce((sum, ch) => sum + ch.text.split(/\s+/).length, 0)
+              }, 
+              null, 2
             )}
-            
-            {/* We're now using the TextPreviewSection which has its own manual split functionality */}
-            
-            {/* Show chapter download section when chapters are available and chunking was successful */}
-            {chapters.length > 0 && wasChunked && (
-              <ChapterDownloadSection
-                chapters={chapters}
-                bookTitle={bookTitle}
-              />
-            )}
-            
-            {/* We're now displaying generated chapters in our audio generation section */}
-          </div>
+          </pre>
         </div>
-      </main>
-      
-      <Footer />
+      )}
     </div>
   );
-};
-
-export default Home;
+}
