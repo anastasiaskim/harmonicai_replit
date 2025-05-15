@@ -101,6 +101,7 @@ export class MemStorage implements IStorage {
 
   async updateAnalytics(data: Partial<InsertAnalytics>): Promise<Analytics> {
     if (!this.analyticsData) {
+      // Initialize new analytics record
       const id = this.analyticsIdCounter++;
       this.analyticsData = { 
         id, 
@@ -111,12 +112,14 @@ export class MemStorage implements IStorage {
         createdAt: data.createdAt || new Date().toISOString()
       };
     } else {
+      // Update existing analytics record with type safety
+      const existingData = this.analyticsData;
       this.analyticsData = { 
-        ...this.analyticsData,
-        conversions: data.conversions !== undefined ? data.conversions : this.analyticsData.conversions,
-        totalCharacters: data.totalCharacters !== undefined ? data.totalCharacters : this.analyticsData.totalCharacters,
-        fileTypes: data.fileTypes || this.analyticsData.fileTypes,
-        voiceUsage: data.voiceUsage ? { ...this.analyticsData.voiceUsage, ...data.voiceUsage } : this.analyticsData.voiceUsage
+        ...existingData,
+        conversions: data.conversions !== undefined ? data.conversions : existingData.conversions,
+        totalCharacters: data.totalCharacters !== undefined ? data.totalCharacters : existingData.totalCharacters,
+        fileTypes: data.fileTypes || existingData.fileTypes,
+        voiceUsage: data.voiceUsage ? { ...existingData.voiceUsage as Record<string, number>, ...data.voiceUsage as Record<string, number> } : existingData.voiceUsage
       };
     }
     return this.analyticsData;
