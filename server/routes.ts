@@ -11,6 +11,9 @@ import JSZip from "jszip";
 import { textToSpeechSchema } from "@shared/schema";
 import { storage } from "./storage";
 
+// Import schemas from use cases
+import { apiKeySchema, chapterDetectionSchema } from "./application/useCases";
+
 // Import application layer
 import { 
   apiKeyUseCase,
@@ -40,7 +43,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get available voices
   app.get("/api/voices", async (_req: Request, res: Response) => {
     try {
-      const voices = await getVoicesUseCase();
+      const voices = await storage.getVoices();
       res.json(voices);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch voices" });
@@ -58,10 +61,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "No file provided" });
         }
 
-        // Process the file using the upload use case
-        const result = await processTextUseCase({
-          file: req.file
-        });
+        // Simple file processing for text extraction
+        const buffer = req.file.buffer;
+        const filename = req.file.originalname;
+        const text = buffer.toString('utf-8');
+        
+        // Store the file with a unique name
+        const uploadPath = path.join(uploadDir, `${Date.now()}-${filename}`);
+        fs.writeFileSync(uploadPath, buffer);
+        
+        // Return the extracted text and file metadata
+        const result = {
+          text,
+          fileMetadata: {
+            key: uploadPath,
+            name: filename,
+            size: buffer.length,
+            url: `/uploads/${path.basename(uploadPath)}`,
+            mimeType: req.file.mimetype
+          },
+          charCount: text.length
+        };
 
         return res.json(result);
       } catch (error) {
@@ -85,10 +105,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Process the input (file or direct text)
-        const result = await processTextUseCase({
-          file: req.file, 
-          directText: req.body.text
-        });
+        let text = '';
+        let fileMetadata = null;
+        
+        // Process file if provided
+        if (req.file) {
+          const buffer = req.file.buffer;
+          const filename = req.file.originalname;
+          text = buffer.toString('utf-8');
+          
+          // Store the file with a unique name
+          const uploadPath = path.join(uploadDir, `${Date.now()}-${filename}`);
+          fs.writeFileSync(uploadPath, buffer);
+          
+          fileMetadata = {
+            key: uploadPath,
+            name: filename,
+            size: buffer.length,
+            url: `/uploads/${path.basename(uploadPath)}`,
+            mimeType: req.file.mimetype
+          };
+        } else if (req.body.text) {
+          // Use direct text input
+          text = req.body.text;
+        }
+        
+        // Return the result
+        const result = {
+          text,
+          fileMetadata,
+          charCount: text.length
+        };
 
         return res.json(result);
       } catch (error) {
