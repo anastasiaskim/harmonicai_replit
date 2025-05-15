@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookOpen, Download, Play, Clock, Music, FileAudio } from 'lucide-react';
+import { BookOpen, Download, Play, Clock, Music, FileAudio, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import GlobalAudioPlayer from './GlobalAudioPlayer';
 
@@ -64,6 +64,17 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
         <GlobalAudioPlayer 
           chapters={chapters}
         />
+        {chapters.length > 0 && chapters[0].size === 0 && (
+          <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">
+            <div className="flex space-x-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0" />
+              <div>
+                <p className="font-medium">Audio generation issues</p>
+                <p>The audio files couldn't be generated due to ElevenLabs API limitations. Please check your API key.</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Audiobook stats */}

@@ -213,8 +213,37 @@ const Home = () => {
           );
         }
 
-        const chapterData = await response.json();
-        processedChapters.push(chapterData);
+        const data = await response.json();
+        // Check if we got valid chapter data with non-zero audio files
+        if (data.success && data.chapters && data.chapters.length > 0) {
+          // Check if we have a valid audio file (more than 0 bytes in size)
+          const generatedChapter = data.chapters[0];
+          processedChapters.push(generatedChapter);
+          
+          // If the audio file is empty (0 bytes), show a warning but continue
+          if (generatedChapter.size === 0) {
+            toast({
+              title: "API Limitation",
+              description: "ElevenLabs API quota exceeded. Using empty audio file as placeholder.",
+              variant: "warning",
+            });
+            
+            // Need to check if ELEVENLABS_API_KEY is available or expired
+            const secretsResponse = await fetch('/api/check-secret?key=ELEVENLABS_API_KEY');
+            if (secretsResponse.ok) {
+              const secretsData = await secretsResponse.json();
+              if (!secretsData.exists) {
+                toast({
+                  title: "API Key Missing",
+                  description: "Please provide a valid ElevenLabs API key.",
+                  variant: "destructive",
+                });
+              }
+            }
+          }
+        } else {
+          throw new Error(`Failed to process chapter "${chapter.title}"`);
+        }
         
         // Update UI with progress
         setGeneratedChapters([...processedChapters]);

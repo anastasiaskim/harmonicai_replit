@@ -40,6 +40,11 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
       setIsLoading(false);
     };
     
+    const handleLoadError = (error: Event) => {
+      console.error('Error loading audio file:', error);
+      setIsLoading(false);
+    };
+    
     const handleEnded = () => {
       // Auto-advance to next chapter if available
       if (currentChapterIndex < chapters.length - 1) {
@@ -55,6 +60,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
       audioRef.current.pause();
       audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
       audioRef.current.removeEventListener('loadeddata', handleLoadedData);
+      audioRef.current.removeEventListener('error', handleLoadError);
       audioRef.current.removeEventListener('ended', handleEnded);
     }
     
@@ -73,12 +79,14 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
     // Add event listeners
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadeddata', handleLoadedData);
+    audio.addEventListener('error', handleLoadError);
     audio.addEventListener('ended', handleEnded);
     
     return () => {
       audio.pause();
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadeddata', handleLoadedData);
+      audio.removeEventListener('error', handleLoadError);
       audio.removeEventListener('ended', handleEnded);
     };
   }, [currentChapter, currentChapterIndex, chapters.length, volume]);
