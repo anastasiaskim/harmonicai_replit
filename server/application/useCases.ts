@@ -14,11 +14,21 @@ export interface ProcessTextInput {
   directText?: string;
 }
 
+// File metadata interface
+export interface FileMetadata {
+  key: string;
+  name: string;
+  size: number;
+  url: string;
+  mimeType: string;
+}
+
 // Interface for text processing output
 export interface ProcessTextOutput {
   text: string;
   chapters: { title: string; text: string }[];
   charCount: number;
+  fileMetadata?: FileMetadata | null;
 }
 
 /**
@@ -36,14 +46,27 @@ export async function getVoicesUseCase(): Promise<Voice[]> {
 export async function processTextUseCase(input: ProcessTextInput): Promise<ProcessTextOutput> {
   let text = '';
   let fileType = 'direct';
+  let fileMetadata = null;
 
   // Process file or use direct text
   if (input.file) {
-    const result = fileService.processFile(input.file);
-    text = result.text;
-    fileType = result.fileType;
+    // Use the new uploadAndExtractText method that stores the file
+    const extractionResult = await fileService.uploadAndExtractText(input.file);
+    
+    text = extractionResult.text;
+    fileType = extractionResult.fileType;
+    fileMetadata = {
+      key: extractionResult.fileInfo.key,
+      name: extractionResult.fileInfo.fileName,
+      size: extractionResult.fileInfo.size,
+      url: extractionResult.fileInfo.fileUrl,
+      mimeType: extractionResult.fileInfo.mimeType
+    };
   } else if (input.directText) {
     text = input.directText;
+    
+    // For direct text input, we don't update analytics here
+    // since there's no file to track
   } else {
     throw new Error('No file or text provided');
   }
@@ -53,16 +76,15 @@ export async function processTextUseCase(input: ProcessTextInput): Promise<Proce
     text = text.substring(0, 50000);
   }
 
-  // Update analytics
-  await fileService.updateFileAnalytics(fileType, text.length);
-
   // Detect chapters in the text
   const chapters = chapterService.detectChapters(text);
 
+  // Return text, chapters, character count, and file metadata if available
   return {
     text,
     chapters,
     charCount: text.length,
+    fileMetadata
   };
 }
 

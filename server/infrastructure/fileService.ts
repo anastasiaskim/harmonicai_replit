@@ -1,19 +1,53 @@
 /**
  * Infrastructure Layer: File Service
- * Manages file operations and abstracts file system interactions
+ * Manages file operations and text extraction
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { storage } from '../storage';
-
-const uploadDir = path.resolve(process.cwd(), 'uploads');
+import { storageService, StoredFile } from './storageService';
 
 export interface FileProcessingResult {
   text: string;
   fileType: string;
+  fileKey?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileUrl?: string;
+}
+
+export interface TextExtractionResult {
+  text: string;
+  fileInfo: StoredFile;
+  charCount: number;
+  fileType: string;
 }
 
 class FileService {
+  /**
+   * Validate file type and size
+   * For Phase 2, we only support .txt files
+   */
+  validateFile(file: any): boolean {
+    const { originalname, buffer, mimetype, size } = file;
+    
+    // Validate mimetype and extension
+    const isValidType = mimetype === "text/plain" || 
+                        originalname.toLowerCase().endsWith(".txt");
+    
+    if (!isValidType) {
+      throw new Error("Invalid file type. Only TXT files are supported.");
+    }
+    
+    // Validate file size (5MB limit)
+    const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+    if (size > MAX_SIZE) {
+      throw new Error(`File too large. Maximum file size is 5MB.`);
+    }
+    
+    return true;
+  }
+
   /**
    * Process an uploaded file and extract its content
    * For Phase 2, we only support .txt files
@@ -21,13 +55,48 @@ class FileService {
   processFile(file: any): FileProcessingResult {
     const { originalname, buffer, mimetype } = file;
     
-    // For Phase 2, we only support .txt files
-    if (mimetype === "text/plain" || originalname.toLowerCase().endsWith(".txt")) {
-      const text = buffer.toString("utf-8");
-      const fileType = "txt";
-      return { text, fileType };
-    } else {
-      throw new Error("Invalid file type. Only TXT files are supported.");
+    // Validate the file
+    this.validateFile(file);
+    
+    // Extract text content from the file
+    const text = buffer.toString("utf-8");
+    const fileType = "txt";
+    
+    return { text, fileType };
+  }
+  
+  /**
+   * Upload file to storage and extract text
+   * This implements the "/upload-ebook" edge function functionality
+   */
+  async uploadAndExtractText(file: any): Promise<TextExtractionResult> {
+    try {
+      // Validate and process file
+      this.validateFile(file);
+      
+      // Extract basic text content
+      const { text, fileType } = this.processFile(file);
+      
+      // Store the file
+      const storedFile = await storageService.storeFile(
+        file.buffer,
+        file.originalname,
+        file.mimetype
+      );
+      
+      // Update analytics
+      await this.updateFileAnalytics(fileType, text.length);
+      
+      // Return extracted text and file metadata
+      return {
+        text,
+        fileInfo: storedFile,
+        charCount: text.length,
+        fileType
+      };
+    } catch (error) {
+      console.error('Error uploading and extracting text:', error);
+      throw error;
     }
   }
   
@@ -50,29 +119,6 @@ class FileService {
         fileTypes: updatedFileTypes
       });
     }
-  }
-  
-  /**
-   * Get file path in upload directory
-   */
-  getFilePath(filename: string): string {
-    return path.join(uploadDir, filename);
-  }
-  
-  /**
-   * Create a file in the upload directory
-   */
-  createFile(filename: string, content: Buffer): void {
-    const filePath = this.getFilePath(filename);
-    fs.writeFileSync(filePath, content);
-  }
-  
-  /**
-   * Check if a file exists
-   */
-  fileExists(filename: string): boolean {
-    const filePath = this.getFilePath(filename);
-    return fs.existsSync(filePath);
   }
 }
 

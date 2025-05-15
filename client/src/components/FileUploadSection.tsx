@@ -85,7 +85,8 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
       const formData = new FormData();
       formData.append('file', file);
       
-      const response = await fetch('/api/upload', {
+      // Use the new edge function endpoint
+      const response = await fetch('/api/upload-ebook', {
         method: 'POST',
         body: formData,
       });

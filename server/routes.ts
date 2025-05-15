@@ -21,6 +21,7 @@ import {
 import { fileService } from "./infrastructure/fileService";
 import { chapterService } from "./infrastructure/chapterService";
 import { audioService } from "./infrastructure/audioService";
+import { storageService } from "./infrastructure/storageService";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -49,7 +50,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Upload and process text
+  // Upload ebook and extract text (Phase 2 Edge Function)
+  app.post(
+    "/api/upload-ebook",
+    upload.single("file"),
+    async (req: Request, res: Response) => {
+      try {
+        // Basic validation
+        if (!req.file) {
+          return res.status(400).json({ error: "No file provided" });
+        }
+
+        // Process the file using the upload use case
+        const result = await processTextUseCase({
+          file: req.file
+        });
+
+        return res.json(result);
+      } catch (error) {
+        console.error("Upload error:", error);
+        return res.status(500).json({ 
+          error: error instanceof Error ? error.message : "Failed to process file" 
+        });
+      }
+    }
+  );
+  
+  // Keep the original endpoint for backward compatibility
   app.post(
     "/api/upload",
     upload.single("file"),
@@ -105,7 +132,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Serve audio files
+  // Serve audio files (legacy endpoint)
   app.get("/api/audio/:filename", (req: Request, res: Response) => {
     const filename = req.params.filename;
     
@@ -128,6 +155,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(500).json({ error: "Failed to serve audio file" });
     }
   });
+  
+  // Serve files from storage (uploads or audio)
+  app.get("/uploads/:filename", (req: Request, res: Response) => {
+    const key = `uploads/${req.params.filename}`;
+    serveStoredFile(key, res);
+  });
+  
+  app.get("/audio/:filename", (req: Request, res: Response) => {
+    const key = `audio/${req.params.filename}`;
+    serveStoredFile(key, res);
+  });
+  
+  // Helper function to serve files from storage
+  function serveStoredFile(key: string, res: Response) {
+    try {
+      const fileData = storageService.serveFile(key);
+      
+      if (!fileData) {
+        return res.status(404).json({ error: "File not found" });
+      }
+      
+      // Set appropriate headers
+      res.setHeader('Content-Type', fileData.file.mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename=${fileData.file.fileName}`);
+      
+      // Send the file
+      res.send(fileData.buffer);
+    } catch (error) {
+      console.error("Error serving file:", error);
+      return res.status(500).json({ error: "Failed to serve file" });
+    }
+  }
 
   // Get analytics
   app.get("/api/analytics", async (_req: Request, res: Response) => {
