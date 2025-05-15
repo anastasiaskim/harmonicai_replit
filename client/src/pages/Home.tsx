@@ -8,8 +8,10 @@ import GenerateSection from '@/components/GenerateSection';
 import TextPreviewSection from '@/components/TextPreviewSection';
 import ChaptersSection from '@/components/ChaptersSection';
 import QuickConversionSection from '@/components/QuickConversionSection';
+import ChapterDownloadSection from '@/components/ChapterDownloadSection';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
+import { extractBookTitle } from '@/lib/chapterDetection';
 
 type Chapter = {
   title: string;
@@ -50,6 +52,7 @@ const Home = () => {
   const [isGenerating, setIsGenerating] = React.useState<boolean>(false);
   const [generatedChapters, setGeneratedChapters] = React.useState<GeneratedChapter[]>([]);
   const [error, setError] = React.useState<string | null>(null);
+  const [bookTitle, setBookTitle] = React.useState<string>('Untitled Book');
 
   const { toast } = useToast();
 
@@ -74,11 +77,24 @@ const Home = () => {
       setFileMetadata(result.fileMetadata || null);
       setError(null);
       
+      // Try to extract a book title from the text
+      const detectedTitle = extractBookTitle(result.text);
+      setBookTitle(detectedTitle);
+      
+      console.log(`Extracted book title: "${detectedTitle}"`);
+      console.log(`Detected ${result.chapters.length} chapters in the text`);
+      
+      // Show success message about extracted chapters
+      toast({
+        title: "Text Processing Complete",
+        description: `Extracted ${result.chapters.length} chapters from "${detectedTitle}"`,
+      });
+      
       // Auto-convert the extracted text to speech if we have a valid file
       if (result.text && result.chapters.length > 0) {
         toast({
-          title: "Text extracted",
-          description: "Now converting to speech automatically...",
+          title: "Starting Audio Conversion",
+          description: "Now converting text to speech automatically...",
         });
         
         // Trigger the audio generation

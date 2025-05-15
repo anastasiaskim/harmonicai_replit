@@ -1,0 +1,54 @@
+**I. Product Requirements Document (PRD): Chapter Chunking Feature**
+
+**1. Introduction**
+
+- **Purpose:** This document outlines the requirements for implementing a "Chapter Chunking" feature within the app, which will automatically divide an ebook in .txt format into individual chapter files.
+- **Goal:** To provide a reliable and automated process for separating ebook content into chapters, streamlining the audiobook creation workflow.
+
+**2. Goals**
+
+- **Primary:** Accurately divide a .txt ebook file into chapter files.
+- **Secondary:** Provide users with a clear indication of successful chunking.
+
+**3. Target Audience**
+
+- Users of the app who upload .txt ebooks.
+
+**4. User Stories**
+
+- As a user, I want to upload a .txt ebook, so that the system automatically identifies chapter headings and divides the content accordingly.
+- As a user, I want to be notified when the chunking process is completed successfully.
+- As a user, I want the chapter names/titles to be automatically generated from the chapter headings.
+- As a user, if the system fails to recognize chapter headings, I want to be notified to manually divide the book.
+- As a user, I want to download the chunked chapters as individual .txt files.
+
+**5. Functional Requirements**
+
+- **Input:** The system must accept a .txt file containing the complete ebook content.
+- **Chapter Detection:** The system must automatically identify chapter headings based on regular expressions (configurable).
+- **Chapter File Creation:** The system must create individual .txt files for each detected chapter.
+- **Naming Convention:** The chapter files should be named based on the detected chapter heading. If a heading is not found or not parsable, use a default naming scheme (e.g., "Chapter 1.txt", "Chapter 2.txt").
+- **Output:** The system should provide a zip file containing all the extracted chapter txt files.
+- **Error Handling:** If the system fails to detect chapter headings, it should display an error message to the user, with an option to download the entire .txt file.
+
+**6. Non-Functional Requirements**
+
+- **Performance:** The chapter chunking process should be completed within a reasonable timeframe (e.g., less than 60 seconds for a typical ebook).
+- **Reliability:** The system must reliably chunk the ebook based on the configured regular expressions.
+- **Scalability:** The system should be able to handle ebooks of varying sizes (up to a reasonable limit).
+- **Security:** Protect user data and uploaded ebook content.
+
+**7. Acceptance Criteria**
+
+- The system accurately chunks a .txt ebook into individual chapter files based on predefined chapter heading formats.
+- Chapter files are named correctly based on chapter headings.
+- The user receives clear notification upon successful completion or failure.
+- Error messages are displayed appropriately in case of errors.
+- The chunking process performs within acceptable time limits.
+
+**8. Future Considerations (Out of Scope for MVP)**
+
+- Support for different ebook formats (EPUB, MOBI).
+- Manual chapter splitting interface.
+- Advanced chapter heading customization options.
+- Integration with AI to improve chapter heading detection.
