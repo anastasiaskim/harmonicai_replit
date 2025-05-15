@@ -219,7 +219,11 @@ export function ChaptersSection({
         <TabsContent value="settings" className="mt-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="md:col-span-2">
-              <ApiKeyManagement />
+              <ApiKeyManagement 
+                service="google_ai"
+                serviceName="Google AI"
+                description="Enter your Google AI API key to enable advanced chapter detection with AI."
+              />
             </div>
           </div>
         </TabsContent>

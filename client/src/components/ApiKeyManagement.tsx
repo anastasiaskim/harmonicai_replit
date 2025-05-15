@@ -39,7 +39,9 @@ export function ApiKeyManagement({
         }
       });
     },
-    onSuccess: (data) => {
+    onSuccess: async (response) => {
+      const data = await response.json();
+      
       // Show success message
       toast({
         title: data.success ? "API Key Validated" : "API Key Invalid",
@@ -114,24 +116,26 @@ export function ApiKeyManagement({
             </Alert>
           )}
           
-          {validateKeyMutation.isSuccess && validateKeyMutation.data.success && (
-            <Alert className="bg-green-50 border-green-200">
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-              <AlertTitle>API Key Valid</AlertTitle>
-              <AlertDescription>
-                Your {serviceName} API key has been validated and saved
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          {validateKeyMutation.isSuccess && !validateKeyMutation.data.success && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>API Key Invalid</AlertTitle>
-              <AlertDescription>
-                {validateKeyMutation.data.message}
-              </AlertDescription>
-            </Alert>
+          {validateKeyMutation.isSuccess && validateKeyMutation.data && (
+            <>
+              {(validateKeyMutation.data as any).success ? (
+                <Alert className="bg-green-50 border-green-200">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <AlertTitle>API Key Valid</AlertTitle>
+                  <AlertDescription>
+                    Your {serviceName} API key has been validated and saved
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>API Key Invalid</AlertTitle>
+                  <AlertDescription>
+                    {(validateKeyMutation.data as any).message}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </>
           )}
           
           {validateKeyMutation.isError && (
