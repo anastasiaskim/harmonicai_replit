@@ -40,7 +40,10 @@ if (!fs.existsSync(uploadDir)) {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Serve static files from public directory
-  app.use(express.static('public'));
+  const publicPath = path.resolve(process.cwd(), 'public');
+  if (fs.existsSync(publicPath)) {
+    app.use(express.static(publicPath));
+  }
   
   // API Endpoints (Presentation Layer for API)
   
