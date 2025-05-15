@@ -64,8 +64,10 @@ export class MemStorage implements IStorage {
     
     // Initialize analytics
     this.updateAnalytics({
+      fileUploads: 0,
+      textInputs: 0,
       conversions: 0,
-      totalCharacters: 0,
+      characterCount: 0,
       fileTypes: { txt: 0, epub: 0, pdf: 0, direct: 0 },
       voiceUsage: {},
       createdAt: new Date().toISOString()
@@ -105,8 +107,10 @@ export class MemStorage implements IStorage {
       const id = this.analyticsIdCounter++;
       this.analyticsData = { 
         id, 
+        fileUploads: data.fileUploads || 0,
+        textInputs: data.textInputs || 0,
         conversions: data.conversions || 0,
-        totalCharacters: data.totalCharacters || 0,
+        characterCount: data.characterCount || 0,
         fileTypes: data.fileTypes || { txt: 0, epub: 0, pdf: 0, direct: 0 },
         voiceUsage: data.voiceUsage || {},
         createdAt: data.createdAt || new Date().toISOString()
@@ -116,8 +120,10 @@ export class MemStorage implements IStorage {
       const existingData = this.analyticsData;
       this.analyticsData = { 
         ...existingData,
+        fileUploads: data.fileUploads !== undefined ? data.fileUploads : existingData.fileUploads,
+        textInputs: data.textInputs !== undefined ? data.textInputs : existingData.textInputs,
         conversions: data.conversions !== undefined ? data.conversions : existingData.conversions,
-        totalCharacters: data.totalCharacters !== undefined ? data.totalCharacters : existingData.totalCharacters,
+        characterCount: data.characterCount !== undefined ? data.characterCount : existingData.characterCount,
         fileTypes: data.fileTypes || existingData.fileTypes,
         voiceUsage: data.voiceUsage ? { ...existingData.voiceUsage as Record<string, number>, ...data.voiceUsage as Record<string, number> } : existingData.voiceUsage
       };

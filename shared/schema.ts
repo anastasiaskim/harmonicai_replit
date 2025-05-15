@@ -13,8 +13,10 @@ export const voices = pgTable("voices", {
 // Store analytics data
 export const analytics = pgTable("analytics", {
   id: serial("id").primaryKey(),
+  fileUploads: integer("file_uploads").default(0),
+  textInputs: integer("text_inputs").default(0),
   conversions: integer("conversions").default(0),
-  totalCharacters: integer("total_characters").default(0),
+  characterCount: integer("character_count").default(0),
   fileTypes: jsonb("file_types").default({}).notNull(),
   voiceUsage: jsonb("voice_usage").default({}).notNull(),
   createdAt: text("created_at").notNull(),
@@ -38,8 +40,10 @@ export const insertVoiceSchema = createInsertSchema(voices).pick({
 });
 
 export const insertAnalyticsSchema = createInsertSchema(analytics).pick({
+  fileUploads: true,
+  textInputs: true,
   conversions: true,
-  totalCharacters: true,
+  characterCount: true,
   fileTypes: true,
   voiceUsage: true,
   createdAt: true,

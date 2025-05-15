@@ -150,7 +150,8 @@ export async function getAnalyticsUseCase() {
       conversions: 0,
       characterCount: 0,
       fileTypes: {},
-      voiceUsage: {}
+      voiceUsage: {},
+      createdAt: new Date().toISOString()
     };
   } catch (error) {
     console.error("Error in getAnalyticsUseCase:", error);
