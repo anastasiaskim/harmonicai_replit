@@ -59,7 +59,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
                 </div>
                 <a 
                   href={chapter.audioUrl}
-                  download={`${chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.mp3`}
+                  download={`${chapter.title ? chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'audio'}.mp3`}
                   className="text-teal-600 hover:text-teal-700 flex items-center text-sm font-medium"
                 >
                   <Download className="h-4 w-4 mr-1" />

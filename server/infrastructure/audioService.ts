@@ -141,9 +141,11 @@ class AudioService {
     const elevenLabsVoiceId = this.elevenLabsConfig.voiceMapping[voiceId] || 
                               this.elevenLabsConfig.voiceMapping.rachel;
     
-    // Create unique filename based on content hash
+    // Create unique filename based on content hash, limit title length to avoid ENAMETOOLONG error
     const contentHash = createHash('md5').update(text).digest('hex');
-    const safeTitle = title.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').toLowerCase();
+    // Truncate title to 30 chars max to avoid filename length issues
+    const truncatedTitle = title.length > 30 ? title.substring(0, 30) + '...' : title;
+    const safeTitle = truncatedTitle.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').toLowerCase();
     const fileName = `${safeTitle}_${voiceId}_${contentHash.substring(0, 8)}.mp3`;
     const filePath = path.join(audioDir, fileName);
     
@@ -177,8 +179,8 @@ class AudioService {
           const chunk = textChunks[i];
           console.log(`Processing chunk ${i+1}/${textChunks.length} (${chunk.length} characters)`);
           
-          // Create a temporary filename for this chunk
-          const tempFileName = `${safeTitle}_chunk${i+1}_${contentHash.substring(0, 8)}.mp3`;
+          // Create a temporary filename for this chunk (keep it short)
+          const tempFileName = `chunk${i+1}_${contentHash.substring(0, 8)}.mp3`;
           const tempFilePath = path.join(audioDir, tempFileName);
           tempFilePaths.push(tempFilePath);
           
