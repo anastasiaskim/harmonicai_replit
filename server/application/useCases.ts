@@ -110,7 +110,7 @@ export async function processTextUseCase(input: ProcessTextInput): Promise<Proce
  */
 export async function generateAudiobookUseCase(request: TextToSpeechRequest): Promise<Chapter[]> {
   try {
-    const { chapters: textChapters, voice } = request;
+    const { chapters: textChapters, voiceId } = request;
     const generatedChapters: InsertChapter[] = [];
     
     // Process each chapter
@@ -123,7 +123,7 @@ export async function generateAudiobookUseCase(request: TextToSpeechRequest): Pr
       // Generate audio for the chapter
       const processedChapter = await audioService.generateAudio(
         chapterData, 
-        voice,
+        voiceId,
         true // Enable real API call
       );
       
