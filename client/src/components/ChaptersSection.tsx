@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { BookOpen, Download, Play, Clock, Music, FileAudio, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import GlobalAudioPlayer from './GlobalAudioPlayer';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 interface Chapter {
   id: number;
@@ -17,6 +19,8 @@ interface ChaptersSectionProps {
 
 const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
   const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const globalPlayerRef = useRef<HTMLDivElement>(null);
 
   // Function to format file size
   const formatFileSize = (bytes: number): string => {
@@ -39,17 +43,75 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
   // Calculate total size
   const totalSize = chapters.reduce((sum, chapter) => sum + chapter.size, 0);
 
-  // Function to handle download all chapters
-  const handleDownloadAll = () => {
-    // In a real app, this would trigger multiple downloads or a zip file
-    chapters.forEach(chapter => {
-      window.open(chapter.audioUrl, '_blank');
-    });
+  // Function to fetch audio file as blob
+  const fetchAudioBlob = async (url: string): Promise<Blob | null> => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Failed to fetch ${url}`);
+      return await response.blob();
+    } catch (error) {
+      console.error('Error fetching audio file:', error);
+      return null;
+    }
+  };
+
+  // Function to handle download all chapters as a zip file
+  const handleDownloadAll = async () => {
+    try {
+      setIsDownloading(true);
+      
+      // Create a new JSZip instance
+      const zip = new JSZip();
+      
+      // Add each chapter audio to the zip
+      const downloadPromises = chapters.map(async (chapter, index) => {
+        const blob = await fetchAudioBlob(chapter.audioUrl);
+        if (!blob) return;
+        
+        // Format chapter number with leading zeros
+        const chapterNumber = String(index + 1).padStart(2, '0');
+        const fileName = `${chapterNumber}_${chapter.title.replace(/[^\w\s-]/gi, '_').toLowerCase()}.mp3`;
+        
+        // Add the blob to the zip
+        zip.file(fileName, blob);
+      });
+      
+      // Wait for all downloads to complete
+      await Promise.all(downloadPromises);
+      
+      // Generate the zip file
+      const content = await zip.generateAsync({ type: 'blob' });
+      
+      // Save the zip file
+      saveAs(content, 'audiobook_chapters.zip');
+    } catch (error) {
+      console.error('Error creating zip file:', error);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   // Function to play a specific chapter
   const playChapter = (index: number) => {
     setSelectedChapterIndex(index);
+    
+    // Scroll to the player component when a chapter is selected
+    if (globalPlayerRef.current) {
+      globalPlayerRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    // Find any audio elements on the page and pause them
+    const audioElements = document.querySelectorAll('audio');
+    audioElements.forEach(audio => audio.pause());
+    
+    // Wait a short time for animations to complete
+    setTimeout(() => {
+      // Find the play button in the global player and click it
+      const playButton = globalPlayerRef.current?.querySelector('button[aria-label="Play"]');
+      if (playButton instanceof HTMLButtonElement) {
+        playButton.click();
+      }
+    }, 100);
   };
 
   return (
@@ -60,9 +122,11 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
       </h2>
       
       {/* Global Audio Player */}
-      <div className="mb-6">
+      <div className="mb-6" ref={globalPlayerRef}>
         <GlobalAudioPlayer 
           chapters={chapters}
+          currentChapterIndex={selectedChapterIndex}
+          onChapterChange={setSelectedChapterIndex}
         />
         {chapters.length > 0 && chapters[0].size === 0 && (
           <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">
@@ -95,8 +159,8 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
         </div>
       )}
       
-      {/* Chapter list */}
-      <div className="space-y-2">
+      {/* Chapter list with scrolling */}
+      <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2" style={{ scrollbarWidth: 'thin' }}>
         {chapters.map((chapter, index) => (
           <div 
             key={chapter.id} 
@@ -145,9 +209,19 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
           <Button 
             onClick={handleDownloadAll}
             className="bg-teal-600 hover:bg-teal-700 text-white font-medium shadow-md transition-all"
+            disabled={isDownloading}
           >
-            <Download className="h-4 w-4 mr-2" />
-            Download All Chapters
+            {isDownloading ? (
+              <>
+                <span className="animate-spin h-4 w-4 border-2 border-white border-opacity-50 border-t-white rounded-full mr-2"></span>
+                Creating ZIP file...
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4 mr-2" />
+                Download All Chapters
+              </>
+            )}
           </Button>
         </div>
       )}

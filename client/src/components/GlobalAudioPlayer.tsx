@@ -15,17 +15,35 @@ interface Chapter {
 
 interface GlobalAudioPlayerProps {
   chapters: Chapter[];
+  currentChapterIndex?: number;
+  onChapterChange?: (index: number) => void;
 }
 
-const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
+const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ 
+  chapters, 
+  currentChapterIndex: externalChapterIndex,
+  onChapterChange 
+}) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
+  const [internalChapterIndex, setInternalChapterIndex] = useState(0);
   const [volume, setVolume] = useState(80);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [emptyAudioFile, setEmptyAudioFile] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Use external chapter index if provided, otherwise use internal state
+  const currentChapterIndex = externalChapterIndex !== undefined ? externalChapterIndex : internalChapterIndex;
+  
+  // Function to update chapter index that respects external control
+  const updateChapterIndex = (index: number) => {
+    if (onChapterChange) {
+      onChapterChange(index);
+    } else {
+      setInternalChapterIndex(index);
+    }
+  };
 
   // Get current chapter
   const currentChapter = chapters[currentChapterIndex] || null;
@@ -219,7 +237,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
   // Play previous chapter
   const playPreviousChapter = () => {
     if (currentChapterIndex > 0) {
-      setCurrentChapterIndex(prevIndex => prevIndex - 1);
+      updateChapterIndex(currentChapterIndex - 1);
     } else {
       // If at first chapter, restart current chapter
       if (audioRef.current) {
@@ -232,7 +250,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
   // Play next chapter
   const playNextChapter = () => {
     if (currentChapterIndex < chapters.length - 1) {
-      setCurrentChapterIndex(prevIndex => prevIndex + 1);
+      updateChapterIndex(currentChapterIndex + 1);
     }
   };
 
