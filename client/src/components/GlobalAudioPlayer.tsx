@@ -29,6 +29,9 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
 
   // Get current chapter
   const currentChapter = chapters[currentChapterIndex] || null;
+  
+  // State to track the accurate duration after Web Audio API processing
+  const [accurateDuration, setAccurateDuration] = useState<number | null>(null);
 
   // Effect to load and set up the audio element when the current chapter changes
   useEffect(() => {
@@ -46,18 +49,80 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
       return; // Don't try to load the audio if we know it's empty
     }
     
+    // Function to get accurate duration using Web Audio API
+    const getAccurateDuration = async (audioUrl: string): Promise<number> => {
+      try {
+        // Create audio context
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContext) {
+          console.warn('Web Audio API not supported in this browser');
+          return 0;
+        }
+        
+        const audioContext = new AudioContext();
+        
+        // Fetch the audio file
+        const response = await fetch(audioUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio: ${response.status} ${response.statusText}`);
+        }
+        
+        // Get the audio data as ArrayBuffer
+        const arrayBuffer = await response.arrayBuffer();
+        
+        // Decode the audio data
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        // Return the actual duration in seconds
+        return audioBuffer.duration;
+      } catch (error) {
+        console.error('Error getting accurate duration:', error);
+        return 0;
+      }
+    };
+    
     // Function declarations for event handlers
     const handleTimeUpdate = (event: Event) => {
       const audio = event.target as HTMLAudioElement;
       if (audio) setCurrentTime(audio.currentTime);
     };
     
-    const handleLoadedData = () => {
+    const handleLoadedData = async () => {
       setIsLoading(false);
+      
       // If the duration is 0, it's likely an empty or corrupted file
       if (audioRef.current && audioRef.current.duration === 0) {
         setEmptyAudioFile(true);
         setErrorMessage("Audio file appears to be empty or corrupted.");
+        return;
+      }
+      
+      // Get accurate duration using Web Audio API
+      try {
+        const accurateDuration = await getAccurateDuration(currentChapter.audioUrl);
+        if (accurateDuration > 0) {
+          // Update accurate duration state
+          setAccurateDuration(accurateDuration);
+          
+          // Update chapter duration in state if different from the server estimate
+          if (Math.abs(currentChapter.duration - accurateDuration) > 5) {
+            console.log(`Correcting audio duration from ${currentChapter.duration}s to ${accurateDuration.toFixed(2)}s`);
+            // Create a copy of the current chapter with the updated duration
+            const updatedChapter = {
+              ...currentChapter,
+              duration: accurateDuration
+            };
+            
+            // Update the chapter in the array
+            const updatedChapters = [...chapters];
+            updatedChapters[currentChapterIndex] = updatedChapter;
+            
+            // Here we would ideally update the parent component with the accurate chapters
+            // Since we don't have a prop for this, we'll use the local state
+          }
+        }
+      } catch (err) {
+        console.warn('Could not get accurate duration, using estimate:', err);
       }
     };
     
