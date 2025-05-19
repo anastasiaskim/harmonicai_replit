@@ -154,11 +154,8 @@ const Home = () => {
   const handleGenerateAudiobook = async () => {
     // Check if we have content to convert
     if (!text || chapters.length === 0) {
-      toast({
-        title: "No content",
-        description: "Please upload a file or paste text first.",
-        variant: "destructive",
-      });
+      // Instead of showing a toast, use our UI to display this message
+      setError("Please upload a valid text file before generating an audiobook");
       return;
     }
 
