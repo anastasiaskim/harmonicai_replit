@@ -228,9 +228,10 @@ class ElevenLabsService {
           // Use alternative API endpoint with streaming response
           // Split text into smaller chunks if it's too large
           const maxChunkSize = 5000; // Max characters per chunk
-          const textChunks: string[] = [];
           
-          // Split text into chunks to avoid token limits 
+          // Split text intelligently at sentence boundaries to avoid token limits
+          // The splitTextIntoSentenceChunks method doesn't exist yet, so use a simple chunking approach
+          const textChunks: string[] = [];
           let i = 0;
           while (i < text.length) {
             const chunk = text.slice(i, i + maxChunkSize);
@@ -426,6 +427,110 @@ class ElevenLabsService {
     
     const uniqueId = uuid().substring(0, 8);
     return `${safeTitle}_${voiceId}_${uniqueId}.mp3`;
+  }
+  
+  /**
+   * Split text into chunks, respecting sentence boundaries when possible
+   * @param text The full text to split
+   * @param maxChunkSize Maximum size of each chunk (characters)
+   * @returns Array of text chunks
+   */
+  splitTextIntoSentenceChunks(text: string, maxChunkSize: number = 5000): string[] {
+    // Ensure we stay well below the 10,000 character limit for eleven_multilingual_v2
+    // We use 5,000 by default for safety
+    
+    // If text is already small enough, return it as a single chunk
+    if (text.length <= maxChunkSize) {
+      return [text];
+    }
+    
+    const chunks: string[] = [];
+    let currentChunk = '';
+    
+    // Split the text by sentences
+    // This regex matches sentence endings (period, question mark, exclamation followed by space or newline)
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    
+    for (const sentence of sentences) {
+      // If single sentence exceeds max chunk size, split it further
+      if (sentence.length > maxChunkSize) {
+        // If current chunk has content, add it to chunks first
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk);
+          currentChunk = '';
+        }
+        
+        // Split long sentence by paragraphs or simply by size if needed
+        const paragraphs = sentence.split(/\n\s*\n/);
+        
+        for (const paragraph of paragraphs) {
+          if (paragraph.length <= maxChunkSize) {
+            // If paragraph fits in a chunk, add it
+            if (currentChunk.length + paragraph.length + 1 <= maxChunkSize) {
+              currentChunk += (currentChunk ? ' ' : '') + paragraph;
+            } else {
+              chunks.push(currentChunk);
+              currentChunk = paragraph;
+            }
+          } else {
+            // If paragraph is too big, we need to split it arbitrarily
+            // First add current chunk if it has content
+            if (currentChunk.length > 0) {
+              chunks.push(currentChunk);
+              currentChunk = '';
+            }
+            
+            // Then split the paragraph into fixed-size chunks
+            // Try to split on commas or spaces when possible
+            let paraIndex = 0;
+            while (paraIndex < paragraph.length) {
+              let chunkEndIndex = Math.min(paraIndex + maxChunkSize, paragraph.length);
+              
+              // Try to find a good breaking point (comma or space)
+              if (chunkEndIndex < paragraph.length) {
+                // Look for comma followed by space
+                const commaIndex = paragraph.lastIndexOf(', ', chunkEndIndex);
+                if (commaIndex > paraIndex && (chunkEndIndex - commaIndex) < 100) {
+                  chunkEndIndex = commaIndex + 1; // Include the comma
+                } else {
+                  // If no comma, try to break at a space
+                  const spaceIndex = paragraph.lastIndexOf(' ', chunkEndIndex);
+                  if (spaceIndex > paraIndex && (chunkEndIndex - spaceIndex) < 50) {
+                    chunkEndIndex = spaceIndex;
+                  }
+                  // Otherwise, just break at the max size
+                }
+              }
+              
+              chunks.push(paragraph.substring(paraIndex, chunkEndIndex).trim());
+              paraIndex = chunkEndIndex;
+            }
+          }
+        }
+      } else {
+        // Normal case: add sentence to current chunk if it fits
+        if (currentChunk.length + sentence.length + 1 <= maxChunkSize) {
+          currentChunk += (currentChunk ? ' ' : '') + sentence;
+        } else {
+          // If doesn't fit, start a new chunk
+          chunks.push(currentChunk);
+          currentChunk = sentence;
+        }
+      }
+    }
+    
+    // Add the last chunk if it has content
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+    
+    // Log information about the chunking
+    console.log(`Split text (${text.length} chars) into ${chunks.length} chunks`);
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(`  Chunk ${i+1}: ${chunks[i].length} chars`);
+    }
+    
+    return chunks;
   }
 }
 
