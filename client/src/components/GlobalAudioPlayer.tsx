@@ -291,7 +291,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
           <Slider
             value={[currentTime]}
             min={0}
-            max={currentChapter?.duration || 100}
+            max={accurateDuration || currentChapter?.duration || 100}
             step={0.1}
             onValueChange={handleSeek}
             disabled={isLoading || !currentChapter || emptyAudioFile || !!errorMessage}
@@ -299,7 +299,14 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ chapters }) => {
           />
           <div className="flex justify-between text-xs text-gray-500 mt-1">
             <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(currentChapter?.duration || 0)}</span>
+            <span>
+              {accurateDuration 
+                ? formatTime(accurateDuration) 
+                : formatTime(currentChapter?.duration || 0)}
+              {accurateDuration && currentChapter && Math.abs(currentChapter.duration - accurateDuration) > 10 && (
+                <span className="text-amber-500 ml-1">(corrected)</span>
+              )}
+            </span>
           </div>
         </div>
         
