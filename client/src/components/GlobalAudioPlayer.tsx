@@ -51,6 +51,13 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
   // State to track the accurate duration after Web Audio API processing
   const [accurateDuration, setAccurateDuration] = useState<number | null>(null);
 
+  // Effect to reset play state when chapter changes
+  useEffect(() => {
+    // Reset play state when chapter changes
+    setIsPlaying(false);
+    setCurrentTime(0);
+  }, [currentChapterIndex]);
+  
   // Effect to load and set up the audio element when the current chapter changes
   useEffect(() => {
     if (!currentChapter) return;
@@ -58,6 +65,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     // Reset error states when changing chapters
     setErrorMessage(null);
     setEmptyAudioFile(false);
+    setAccurateDuration(null);
     
     // Check if this is an empty audio file (size 0 bytes)
     if (currentChapter.size !== undefined && currentChapter.size === 0) {
@@ -153,7 +161,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     const handleEnded = () => {
       // Auto-advance to next chapter if available
       if (currentChapterIndex < chapters.length - 1) {
-        setCurrentChapterIndex(prevIndex => prevIndex + 1);
+        updateChapterIndex(currentChapterIndex + 1);
       } else {
         setIsPlaying(false);
         setCurrentTime(0);
@@ -347,6 +355,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
               className="bg-primary hover:bg-primary/90 text-white rounded-full w-10 h-10 flex items-center justify-center"
               onClick={togglePlayback}
               disabled={isLoading || !currentChapter || emptyAudioFile || !!errorMessage}
+              aria-label={isPlaying ? "Pause" : "Play"}
             >
               {isPlaying ? (
                 <Pause className="h-5 w-5" />
