@@ -240,41 +240,101 @@ class ElevenLabsService {
           
           console.log(`Split text into ${textChunks.length} chunks for streaming`);
           
-          // Process first chunk only in fallback mode
-          const chunkToProcess = textChunks[0];
-          
-          // Create request body for streaming
-          const streamRequestBody = {
-            text: chunkToProcess,
-            model_id: "eleven_multilingual_v2",
-            voice_settings: voiceSettings,
-            output_format: "mp3_44100_128"
-          };
-          
-          // Make streaming request to ElevenLabs API
-          const streamResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}/stream`, {
-            method: 'POST',
-            headers: {
-              'Accept': 'audio/mpeg',
-              'Content-Type': 'application/json',
-              'xi-api-key': this.config.apiKey
-            },
-            body: JSON.stringify(streamRequestBody)
-          });
-          
-          if (!streamResponse.ok) {
-            throw new Error(`Streaming API request failed with status: ${streamResponse.status}`);
+          // Create a temp directory for chunk files
+          const tempDir = path.join(process.cwd(), 'temp_audio');
+          if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
           }
           
-          if (streamResponse.body) {
-            // Convert the response to a buffer and write to file
-            const buffer = Buffer.from(await streamResponse.arrayBuffer());
-            fs.writeFileSync(filePath, buffer);
+          // Array to store paths to temporary audio chunk files
+          const chunkFilePaths: string[] = [];
+          
+          // Process each chunk sequentially
+          for (let i = 0; i < textChunks.length; i++) {
+            const chunkToProcess = textChunks[i];
+            const chunkFileName = `chunk_${i}_${path.basename(filePath)}`;
+            const chunkFilePath = path.join(tempDir, chunkFileName);
             
-            // Simulate stream completion
-            fileStream.end();
-          } else {
-            throw new Error('No response body received from streaming API');
+            console.log(`Processing chunk ${i+1}/${textChunks.length} (${chunkToProcess.length} chars)`);
+            
+            // Create request body for streaming
+            const streamRequestBody = {
+              text: chunkToProcess,
+              model_id: "eleven_multilingual_v2",
+              voice_settings: voiceSettings,
+              output_format: "mp3_44100_128"
+            };
+            
+            try {
+              // Make streaming request to ElevenLabs API
+              const streamResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}/stream`, {
+                method: 'POST',
+                headers: {
+                  'Accept': 'audio/mpeg',
+                  'Content-Type': 'application/json',
+                  'xi-api-key': this.config.apiKey
+                },
+                body: JSON.stringify(streamRequestBody)
+              });
+              
+              if (!streamResponse.ok) {
+                console.error(`Chunk ${i+1} failed with status: ${streamResponse.status}`);
+                continue; // Skip to next chunk rather than failing completely
+              }
+              
+              if (streamResponse.body) {
+                // Convert the response to a buffer and write to chunk file
+                const buffer = Buffer.from(await streamResponse.arrayBuffer());
+                fs.writeFileSync(chunkFilePath, buffer);
+                chunkFilePaths.push(chunkFilePath);
+                
+                console.log(`Saved chunk ${i+1} to ${chunkFilePath}`);
+              }
+            } catch (chunkError) {
+              console.error(`Error processing chunk ${i+1}:`, chunkError);
+              // Continue with next chunk rather than failing completely
+            }
+            
+            // Add a small delay between API calls to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          
+          if (chunkFilePaths.length === 0) {
+            throw new Error('Failed to process any chunks successfully');
+          }
+          
+          // Now combine all chunks into the final output file
+          try {
+            // Create the output file stream
+            const outputStream = fs.createWriteStream(filePath);
+            
+            // Append each chunk file to the output file
+            for (const chunkPath of chunkFilePaths) {
+              const chunkData = fs.readFileSync(chunkPath);
+              outputStream.write(chunkData);
+            }
+            
+            // Close the output stream
+            outputStream.end();
+            
+            // Clean up temporary files
+            for (const chunkPath of chunkFilePaths) {
+              try {
+                fs.unlinkSync(chunkPath);
+              } catch (e) {
+                console.warn(`Could not delete temporary file ${chunkPath}:`, e);
+              }
+            }
+            
+            // Try to clean up the temp directory
+            try {
+              fs.rmdirSync(tempDir);
+            } catch (e) {
+              console.warn('Could not delete temporary directory:', e);
+            }
+          } catch (combineError) {
+            console.error('Error combining audio chunks:', combineError);
+            throw new Error(`Failed to combine audio chunks: ${combineError}`);
           }
           
           return new Promise((resolve) => {
