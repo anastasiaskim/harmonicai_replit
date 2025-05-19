@@ -127,58 +127,71 @@ const TextPreviewSection: React.FC<TextPreviewSectionProps> = ({
         )}
         
         {/* Text Preview Area */}
-        {text && !error ? (
+        {!error ? (
           <div>
-            {chapters.length > 0 ? (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-gray-800">
-                    {currentChapter?.title || 'Chapter Preview'}
-                  </h3>
-                  {chapters.length > 1 && (
-                    <div className="flex items-center space-x-1">
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        disabled={currentChapterIndex === 0}
-                        onClick={prevChapter}
-                        className="h-8 w-8 p-0"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span className="text-xs text-gray-500">
-                        {currentChapterIndex + 1} / {chapters.length}
-                      </span>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        disabled={currentChapterIndex === chapters.length - 1}
-                        onClick={nextChapter}
-                        className="h-8 w-8 p-0"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
+            {text ? (
+              // If we have text, display with chapter navigation if available
+              <>
+                {chapters && chapters.length > 0 ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-medium text-gray-800">
+                        {currentChapter?.title || 'Chapter Preview'}
+                      </h3>
+                      {chapters.length > 1 && (
+                        <div className="flex items-center space-x-1">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            disabled={currentChapterIndex === 0}
+                            onClick={prevChapter}
+                            className="h-8 w-8 p-0"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+                          <span className="text-xs text-gray-500">
+                            {currentChapterIndex + 1} / {chapters.length}
+                          </span>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            disabled={currentChapterIndex === chapters.length - 1}
+                            onClick={nextChapter}
+                            className="h-8 w-8 p-0"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                
-                <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
-                  <div className="whitespace-pre-line">{currentChapter?.text || text}</div>
-                </ScrollArea>
-              </div>
+                    
+                    <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
+                      <div className="whitespace-pre-line">{currentChapter?.text || text}</div>
+                    </ScrollArea>
+                  </div>
+                ) : (
+                  <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
+                    <p className="whitespace-pre-line">{text}</p>
+                  </ScrollArea>
+                )}
+              </>
             ) : (
+              // If no text (initial state)
               <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
-                <p className="whitespace-pre-line">{text}</p>
+                <p className="text-gray-400 text-center my-12">
+                  Upload a text file to extract and preview content
+                </p>
               </ScrollArea>
             )}
           </div>
-        ) : !error ? (
+        ) : (
+          // If error, don't show anything (error is displayed in alert above)
           <ScrollArea className="border border-gray-200 rounded-lg p-4 h-64 font-serif text-gray-800 bg-gray-50">
-            <p className="text-gray-400 text-center my-12">
-              Upload a text file to extract and preview content
+            <p className="text-red-500 text-center my-12">
+              An error occurred while processing the file. Please try again.
             </p>
           </ScrollArea>
-        ) : null}
+        )}
       </CardContent>
     </Card>
   );

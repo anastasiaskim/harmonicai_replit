@@ -1,8 +1,9 @@
 import React from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, AlertCircle } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface GenerateSectionProps {
   onGenerate: () => void;
@@ -33,6 +34,15 @@ const GenerateSection: React.FC<GenerateSectionProps> = ({
               Generate Audiobook
             </Button>
           </div>
+          
+          {isDisabled && (
+            <Alert variant="destructive" className="mt-4 bg-red-100 border-red-200 text-red-800">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                No content to process. Please upload a file or paste text first.
+              </AlertDescription>
+            </Alert>
+          )}
           
           {isGenerating && (
             <div className="pt-2">
