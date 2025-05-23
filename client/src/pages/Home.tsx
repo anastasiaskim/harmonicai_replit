@@ -54,6 +54,15 @@ type GeneratedChapter = {
   size: number; // in bytes
 };
 
+type GenerationProgress = {
+  current: number;
+  total: number;
+  status: 'idle' | 'generating' | 'complete' | 'error';
+};
+
+type ChapterStatus = 'idle' | 'processing' | 'ready' | 'failed';
+type ChapterProgress = { status: ChapterStatus; percent: number; error?: string };
+
 const Home = () => {
   const [text, setText] = React.useState<string>('');
   const [chapters, setChapters] = React.useState<Chapter[]>([]);
@@ -65,6 +74,12 @@ const Home = () => {
   const [bookTitle, setBookTitle] = React.useState<string>('Untitled Book');
   const [wasChunked, setWasChunked] = React.useState<boolean>(true);
   const [originalText, setOriginalText] = React.useState<string>('');
+  const [generationProgress, setGenerationProgress] = React.useState<GenerationProgress>({
+    current: 0,
+    total: 0,
+    status: 'idle'
+  });
+  const [chapterProgress, setChapterProgress] = React.useState<ChapterProgress[]>([]);
 
   const { toast } = useToast();
 
@@ -154,7 +169,6 @@ const Home = () => {
   const handleGenerateAudiobook = async () => {
     // Check if we have content to convert
     if (!text || chapters.length === 0) {
-      // Just return without setting an error
       return;
     }
 
@@ -170,91 +184,116 @@ const Home = () => {
     setIsGenerating(true);
     setError(null);
     
+    // Filter out chapters with empty text
+    const nonEmptyChapters = chapters.filter(ch => ch.text && ch.text.trim().length > 0);
+    if (nonEmptyChapters.length === 0) {
+      toast({
+        title: "No Content",
+        description: "All chapters are empty. Please upload or select content with text.",
+        variant: "destructive",
+      });
+      setIsGenerating(false);
+      return;
+    }
+    // Initialize per-chapter progress
+    setChapterProgress(nonEmptyChapters.map(() => ({ status: 'idle', percent: 0 })));
     // Temporary array to collect processed chapters
     const processedChapters: GeneratedChapter[] = [];
 
     try {
-      // Process each chapter individually to avoid the 50,000 character limit
       toast({
         title: "Processing Audiobook",
-        description: `Starting to process ${chapters.length} chapters...`,
+        description: `Starting to process ${nonEmptyChapters.length} chapters...`,
       });
-      
-      // Process chapters one by one to avoid size limitations
-      for (let i = 0; i < chapters.length; i++) {
-        const chapter = chapters[i];
-        
+      for (let i = 0; i < nonEmptyChapters.length; i++) {
+        const chapter = nonEmptyChapters[i];
+        // Set chapter to processing
+        setChapterProgress(prev => {
+          const updated = [...prev];
+          updated[i] = { status: 'processing', percent: 0 };
+          return updated;
+        });
         toast({
           title: "Processing Chapter",
-          description: `Converting chapter ${i+1} of ${chapters.length}: "${chapter.title}"`,
+          description: `Converting chapter ${i+1} of ${nonEmptyChapters.length}: "${chapter.title}"`,
         });
-        
-        // Send individual chapter for processing
-        // Using the full text-to-speech API instead of the quick conversion endpoint
-        const response = await fetch('/api/text-to-speech', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            chapters: [{ title: chapter.title, text: chapter.text }],
-            voiceId: selectedVoice,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            errorData.error || `Failed to generate audio for chapter "${chapter.title}"`
-          );
-        }
-
-        const data = await response.json();
-        // Check if we got valid chapter data with non-zero audio files
-        if (data.success && data.chapters && data.chapters.length > 0) {
-          // Check if we have a valid audio file (more than 0 bytes in size)
-          const generatedChapter = data.chapters[0];
-          processedChapters.push(generatedChapter);
-          
-          // If the audio file is empty (0 bytes), show a warning but continue
-          if (generatedChapter.size === 0) {
-            toast({
-              title: "API Limitation",
-              description: "ElevenLabs API quota exceeded. Using empty audio file as placeholder.",
-              variant: "warning",
-            });
-            
-            // Check if ELEVENLABS_API_KEY is available or expired
-            try {
-              const secretsResponse = await fetch('/api/check-secret?key=ELEVENLABS_API_KEY');
-              if (secretsResponse.ok) {
-                const secretsData = await secretsResponse.json();
-                if (!secretsData.exists) {
-                  toast({
-                    title: "API Key Missing",
-                    description: "Please provide a valid ElevenLabs API key to generate audio.",
-                    variant: "destructive",
-                  });
-                } else if (secretsData.isValid === false) {
-                  toast({
-                    title: "API Key Invalid",
-                    description: "The ElevenLabs API key appears to be invalid or has expired.",
-                    variant: "destructive",
-                  });
-                }
-              }
-            } catch (secretErr) {
-              console.error("Error checking API key status:", secretErr);
-            }
+        try {
+          const response = await fetch('/api/text-to-speech', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              chapters: [{ title: chapter.title, text: chapter.text }],
+              voiceId: selectedVoice,
+            }),
+          });
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(
+              errorData.error || `Failed to generate audio for chapter "${chapter.title}"`
+            );
           }
-        } else {
-          throw new Error(`Failed to process chapter "${chapter.title}"`);
+          const data = await response.json();
+          if (data.success && data.chapters && data.chapters.length > 0) {
+            const generatedChapter = data.chapters[0];
+            processedChapters.push(generatedChapter);
+            setChapterProgress(prev => {
+              const updated = [...prev];
+              updated[i] = { status: 'ready', percent: 100 };
+              return updated;
+            });
+            if (generatedChapter.size === 0) {
+              toast({
+                title: "API Limitation",
+                description: "ElevenLabs API quota exceeded. Using empty audio file as placeholder.",
+                variant: "destructive",
+              });
+              try {
+                const secretsResponse = await fetch('/api/check-secret?key=ELEVENLABS_API_KEY');
+                if (secretsResponse.ok) {
+                  const secretsData = await secretsResponse.json();
+                  if (!secretsData.exists) {
+                    toast({
+                      title: "API Key Missing",
+                      description: "Please provide a valid ElevenLabs API key to generate audio.",
+                      variant: "destructive",
+                    });
+                  } else if (secretsData.isValid === false) {
+                    toast({
+                      title: "API Key Invalid",
+                      description: "The ElevenLabs API key appears to be invalid or has expired.",
+                      variant: "destructive",
+                    });
+                  }
+                }
+              } catch (secretErr) {
+                console.error("Error checking API key status:", secretErr);
+              }
+            }
+          } else {
+            setChapterProgress(prev => {
+              const updated = [...prev];
+              updated[i] = { status: 'failed', percent: 100, error: `Failed to process chapter "${chapter.title}"` };
+              return updated;
+            });
+            throw new Error(`Failed to process chapter "${chapter.title}"`);
+          }
+        } catch (err: any) {
+          setChapterProgress(prev => {
+            const updated = [...prev];
+            updated[i] = { status: 'failed', percent: 100, error: err.message || 'Failed to generate audiobook' };
+            return updated;
+          });
+          setError(err.message || 'Failed to generate audiobook');
+          toast({
+            title: "Generation Failed",
+            description: err.message || 'An error occurred while generating the audiobook.',
+            variant: "destructive",
+          });
         }
-        
-        // Update UI with progress
         setGeneratedChapters([...processedChapters]);
       }
-      
       toast({
         title: "Audiobook Generated",
         description: `Successfully created ${processedChapters.length} audio chapters.`,
@@ -294,6 +333,7 @@ const Home = () => {
               onGenerate={handleGenerateAudiobook}
               isGenerating={isGenerating}
               isDisabled={!text || chapters.length === 0}
+              progress={generationProgress}
             />
           </div>
           
@@ -317,7 +357,10 @@ const Home = () => {
             )}
             
             {generatedChapters.length > 0 && (
-              <ChaptersSection chapters={generatedChapters} />
+              <ChaptersSection 
+                chapters={generatedChapters}
+                chapterProgress={chapterProgress}
+              />
             )}
           </div>
         </div>

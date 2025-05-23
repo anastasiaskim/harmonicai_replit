@@ -3,10 +3,12 @@
  * 
  * This service handles direct integration with the ElevenLabs API using their official SDK
  */
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { v4 as uuid } from 'uuid';
-import { Readable } from 'stream';
+import { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
+import { RateLimiter } from 'limiter';
 
 // Get audio directory (create if needed)
 const audioDir = path.join(process.cwd(), 'audio');
@@ -20,6 +22,10 @@ interface ElevenLabsConfig {
   voiceMapping: {
     [key: string]: string;
   };
+  rateLimit?: {
+    tokensPerInterval: number;
+    interval: number;
+  };
 }
 
 // Define voice settings interface based on ElevenLabs documentation
@@ -30,9 +36,17 @@ interface VoiceSettings {
   use_speaker_boost?: boolean;
 }
 
+interface Result {
+  success: boolean;
+  filePath: string;
+  error?: string;
+}
+
 class ElevenLabsService {
   private client: any = null;
   private config: ElevenLabsConfig;
+  private audioCache = new Map<string, string>();
+  private rateLimiter: RateLimiter;
   
   constructor() {
     // Default voice mapping
@@ -45,13 +59,23 @@ class ElevenLabsService {
       defaultVoice: 'EXAVITQu4vr4xnSDxMaL' // Rachel as default
     };
     
-    this.config = {
-      apiKey: process.env.ELEVENLABS_API_KEY || '',
-      voiceMapping
+    // Default rate limit configuration (50 requests per minute)
+    const defaultRateLimit = {
+      tokensPerInterval: 50,
+      interval: 60 * 1000 // 60 seconds in milliseconds
     };
     
-    // We don't initialize the client in the constructor anymore
-    // Instead, we create a new client for each API call using dynamic imports
+    this.config = {
+      apiKey: process.env.ELEVENLABS_API_KEY || '',
+      voiceMapping,
+      rateLimit: defaultRateLimit
+    };
+    
+    // Initialize rate limiter
+    this.rateLimiter = new RateLimiter({
+      tokensPerInterval: this.config.rateLimit?.tokensPerInterval || defaultRateLimit.tokensPerInterval,
+      interval: this.config.rateLimit?.interval || defaultRateLimit.interval
+    });
   }
   
   /**
@@ -74,34 +98,42 @@ class ElevenLabsService {
     }
     
     try {
-      // Import ElevenLabs SDK dynamically
-      const elevenlabs = await import('elevenlabs');
-      
-      try {
-        // Create a simple test request directly to the ElevenLabs API
-        const response = await fetch('https://api.elevenlabs.io/v1/voices', {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'xi-api-key': this.config.apiKey
-          }
-        });
-        
-        if (!response.ok) {
-          console.error(`API key validation failed with status: ${response.status}`);
-          return false;
+      // Create a simple test request directly to the ElevenLabs API
+      const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'xi-api-key': this.config.apiKey
         }
-        
-        const data = await response.json();
-        console.log('API key validation successful:', data.voices ? 'voices found' : 'no voices found');
-        return Array.isArray(data.voices) && data.voices.length > 0;
-      } catch (error) {
-        console.error('Error checking ElevenLabs API key validity:', error);
+      });
+      
+      if (!response.ok) {
+        console.error(`API key validation failed with status: ${response.status}`);
         return false;
       }
-    } catch (importError) {
-      console.error('Error importing ElevenLabs SDK:', importError);
+      
+      const data = await response.json();
+      console.log('API key validation successful:', data.voices ? 'voices found' : 'no voices found');
+      return Array.isArray(data.voices) && data.voices.length > 0;
+    } catch (error) {
+      console.error('Error checking ElevenLabs API key validity:', error);
       return false;
+    }
+  }
+  
+  /**
+   * Wait for rate limit token with timeout
+   */
+  private async waitForRateLimitToken(timeoutMs: number = 5000): Promise<boolean> {
+    try {
+      await this.rateLimiter.removeTokens(1);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('RateLimiter timeout')) {
+        console.warn('Rate limit token acquisition timed out');
+        return false;
+      }
+      throw error;
     }
   }
   
@@ -112,7 +144,17 @@ class ElevenLabsService {
     text: string, 
     voiceId: string, 
     fileName: string
-  ): Promise<{ success: boolean; filePath: string; error?: string }> {
+  ): Promise<Result> {
+    // Wait for rate limit token with timeout
+    const hasToken = await this.waitForRateLimitToken();
+    if (!hasToken) {
+      return {
+        success: false,
+        filePath: '',
+        error: 'Rate limit exceeded. Please try again later.'
+      };
+    }
+
     if (!this.isApiKeyConfigured()) {
       return { 
         success: false, 
@@ -133,7 +175,7 @@ class ElevenLabsService {
       console.log(`Text length: ${text.length} characters`);
       
       // Define voice settings
-      const voiceSettings = {
+      const voiceSettings: VoiceSettings = {
         stability: 0.5,
         similarity_boost: 0.5,
         style: 0.0,
@@ -167,7 +209,7 @@ class ElevenLabsService {
         }
         
         // Get audio buffer from response
-        const audio = Buffer.from(await response.arrayBuffer());
+        const audio = new Uint8Array(await response.arrayBuffer());
         
         // Write the audio buffer to a file
         fs.writeFileSync(filePath, audio);
@@ -283,14 +325,10 @@ class ElevenLabsService {
                 continue; // Skip to next chunk rather than failing completely
               }
               
-              if (streamResponse.body) {
-                // Convert the response to a buffer and write to chunk file
-                const buffer = Buffer.from(await streamResponse.arrayBuffer());
-                fs.writeFileSync(chunkFilePath, buffer);
-                chunkFilePaths.push(chunkFilePath);
-                
-                console.log(`Saved chunk ${i+1} to ${chunkFilePath}`);
-              }
+              await this.handleStreamResponse(streamResponse, chunkFilePath);
+              chunkFilePaths.push(chunkFilePath);
+              
+              console.log(`Saved chunk ${i+1} to ${chunkFilePath}`);
             } catch (chunkError) {
               console.error(`Error processing chunk ${i+1}:`, chunkError);
               // Continue with next chunk rather than failing completely
@@ -375,7 +413,7 @@ class ElevenLabsService {
           console.error('Alternative method also failed:', fallbackError);
           
           // Create an empty placeholder file
-          fs.writeFileSync(filePath, Buffer.from(''));
+          this.createEmptyFile(filePath);
           
           return {
             success: false,
@@ -388,7 +426,7 @@ class ElevenLabsService {
       console.error('Error generating audio with ElevenLabs:', error);
       
       // Create an empty placeholder file
-      fs.writeFileSync(filePath, Buffer.from(''));
+      this.createEmptyFile(filePath);
       
       // Try to extract detailed error information
       let errorMessage = 'Unknown error';
@@ -531,6 +569,49 @@ class ElevenLabsService {
     }
     
     return chunks;
+  }
+
+  async generateAudioWithCache(text: string, voiceId: string): Promise<string> {
+    const cacheKey = `${voiceId}-${createHash(text)}`;
+    if (this.audioCache.has(cacheKey)) {
+      return this.audioCache.get(cacheKey)!;
+    }
+    const result = await this.generateAudio(text, voiceId, this.generateUniqueFilename(text, voiceId));
+    this.audioCache.set(cacheKey, result.filePath);
+    return result.filePath;
+  }
+
+  private async handleStreamResponse(streamResponse: Response, chunkFilePath: string): Promise<void> {
+    if (streamResponse.body) {
+      // Convert the response to a buffer and write to chunk file
+      const buffer = new Uint8Array(await streamResponse.arrayBuffer());
+      fs.writeFileSync(chunkFilePath, buffer);
+    }
+  }
+
+  private createEmptyFile(filePath: string): void {
+    fs.writeFileSync(filePath, new Uint8Array(0));
+  }
+
+  /**
+   * Update rate limit configuration
+   */
+  updateRateLimit(tokensPerInterval: number, interval: number): void {
+    this.config.rateLimit = { tokensPerInterval, interval };
+    this.rateLimiter = new RateLimiter({
+      tokensPerInterval,
+      interval
+    });
+  }
+
+  /**
+   * Get current rate limit status
+   */
+  getRateLimitStatus(): { remaining: number; resetTime: number } {
+    const remaining = this.rateLimiter.getTokensRemaining();
+    // Since we can't get the exact reset time, we'll return the interval
+    const resetTime = this.config.rateLimit?.interval || 60000;
+    return { remaining, resetTime };
   }
 }
 

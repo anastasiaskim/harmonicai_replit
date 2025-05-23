@@ -17,12 +17,14 @@ interface GlobalAudioPlayerProps {
   chapters: Chapter[];
   currentChapterIndex?: number;
   onChapterChange?: (index: number) => void;
+  onDurationUpdate?: (chapterIndex: number, duration: number) => void;
 }
 
 const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ 
   chapters, 
   currentChapterIndex: externalChapterIndex,
-  onChapterChange 
+  onChapterChange,
+  onDurationUpdate
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -127,8 +129,11 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
       try {
         const accurateDuration = await getAccurateDuration(currentChapter.audioUrl);
         if (accurateDuration > 0) {
-          // Update accurate duration state
           setAccurateDuration(accurateDuration);
+          // Notify parent of accurate duration
+          if (onDurationUpdate) {
+            onDurationUpdate(currentChapterIndex, accurateDuration);
+          }
           
           // Update chapter duration in state if different from the server estimate
           if (Math.abs(currentChapter.duration - accurateDuration) > 5) {
@@ -292,7 +297,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
         
         {/* Empty audio file warning */}
         {emptyAudioFile && !errorMessage && (
-          <Alert variant="warning" className="mb-2 bg-amber-50 border-amber-200">
+          <Alert variant="default" className="mb-2 bg-amber-50 border-amber-200">
             <AlertCircle className="h-4 w-4 mr-2 text-amber-500" />
             <AlertDescription>
               This audio file is empty due to API quota limitations. Please check your ElevenLabs API key and quota.

@@ -5,11 +5,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import axios from 'axios';
 import { storage } from '../storage';
-import { fileService } from './fileService';
 import { ChapterDTO } from './chapterService';
 import { InsertChapter } from '@shared/schema';
+import { audioConfig } from '../../config/audio.config';
 
 // Helper function to ensure a directory exists
 function ensureDirectoryExists(dirPath: string) {
@@ -24,7 +23,7 @@ const uploadDir = path.resolve(process.cwd(), 'uploads');
 ensureDirectoryExists(uploadDir);
 
 // Ensure audio directory exists
-const audioDir = path.resolve(process.cwd(), 'audio');
+const audioDir = path.resolve(process.cwd(), audioConfig.outputDirectory);
 ensureDirectoryExists(audioDir);
 
 export interface ElevenLabsConfig {
@@ -55,76 +54,100 @@ export interface TextToSpeechRequest {
 class AudioService {
   private elevenLabsConfig: ElevenLabsConfig = {
     apiKey: process.env.ELEVENLABS_API_KEY || '',
-    apiUrl: 'https://api.elevenlabs.io/v1',
-    voiceMapping: {
-      rachel: "EXAVITQu4vr4xnSDxMaL",
-      thomas: "TxGEqnHWrfWFTfGW9XjX",
-      emily: "D38z5RcWu1voky8WS1ja",
-      james: "pNInz6obpgDQGcFmaJgB"
-    }
+    apiUrl: audioConfig.apiUrl,
+    voiceMapping: audioConfig.voiceMapping
   };
   
   /**
-   * Split text into smaller chunks to stay within API limits
+   * Validate text-to-speech request parameters
+   * @param request The text to speech request to validate
+   * @throws Error if validation fails
+   */
+  private validateTextToSpeechRequest(request: TextToSpeechRequest): void {
+    if (!request.text || request.text.trim().length === 0) {
+      throw new Error('Text cannot be empty');
+    }
+    const validVoiceIds = Object.values(this.elevenLabsConfig.voiceMapping);
+    if (
+      !request.voiceId ||
+      (!this.elevenLabsConfig.voiceMapping[request.voiceId] && !validVoiceIds.includes(request.voiceId))
+    ) {
+      throw new Error('Invalid voice ID');
+    }
+    // No need to check for max length here; chunking will handle it
+  }
+
+  /**
+   * Split text into smaller chunks to stay within API limits (Hybrid: paragraph, then sentence, then word, then character)
    * @param text The text to split
-   * @param maxChunkSize Maximum characters per chunk (default: 4000)
+   * @param maxChunkSize Maximum characters per chunk
    * @returns Array of text chunks
    */
-  private splitTextIntoChunks(text: string, maxChunkSize: number = 4000): string[] {
-    // If text is already within the limit, return it as is
+  private splitTextIntoChunks(text: string, maxChunkSize: number = audioConfig.maxChunkSize): string[] {
     if (text.length <= maxChunkSize) {
       return [text];
     }
-    
-    console.log(`Splitting text of length ${text.length} into chunks of max ${maxChunkSize} characters`);
-    
     const chunks: string[] = [];
-    let currentChunk = "";
-    
-    // Split by sentences to preserve natural speech patterns
-    const sentences = text.split(/(?<=[.!?])\s+/);
-    
-    for (const sentence of sentences) {
-      // If adding this sentence would exceed the limit, start a new chunk
-      if (currentChunk.length + sentence.length > maxChunkSize) {
-        if (currentChunk.length > 0) {
-          chunks.push(currentChunk.trim());
-          currentChunk = "";
-        }
-        
-        // Handle sentences that are longer than the max chunk size
-        if (sentence.length > maxChunkSize) {
-          // Split long sentences by words
-          const words = sentence.split(/\s+/);
-          let wordChunk = "";
-          
-          for (const word of words) {
-            if (wordChunk.length + word.length + 1 > maxChunkSize) {
-              chunks.push(wordChunk.trim());
-              wordChunk = word;
+    // Split by paragraphs first
+    const paragraphs = text.split(/\n\n+/);
+    let currentChunk = '';
+    for (const para of paragraphs) {
+      if (para.length > maxChunkSize) {
+        // Paragraph too long, split by sentences
+        const sentences = para.split(audioConfig.sentenceSplitRegex);
+        for (const sentence of sentences) {
+          if (sentence.length > maxChunkSize) {
+            // Sentence too long, split by words
+            const words = sentence.split(/\s+/);
+            let wordChunk = '';
+            for (const word of words) {
+              if (word.length > maxChunkSize) {
+                // Word too long, split by characters
+                console.warn('Word exceeds maxChunkSize, splitting by characters:', word.slice(0, 30) + '...');
+                for (let i = 0; i < word.length; i += maxChunkSize) {
+                  chunks.push(word.slice(i, i + maxChunkSize));
+                }
+                wordChunk = '';
+              } else if ((wordChunk + ' ' + word).trim().length > maxChunkSize) {
+                if (wordChunk) chunks.push(wordChunk.trim());
+                wordChunk = word;
+              } else {
+                wordChunk += (wordChunk ? ' ' : '') + word;
+              }
+            }
+            if (wordChunk) chunks.push(wordChunk.trim());
+          } else {
+            if ((currentChunk + ' ' + sentence).trim().length > maxChunkSize) {
+              if (currentChunk) chunks.push(currentChunk.trim());
+              currentChunk = sentence;
             } else {
-              wordChunk += (wordChunk ? " " : "") + word;
+              currentChunk += (currentChunk ? ' ' : '') + sentence;
             }
           }
-          
-          if (wordChunk.length > 0) {
-            currentChunk = wordChunk;
-          }
-        } else {
-          currentChunk = sentence;
         }
       } else {
-        currentChunk += (currentChunk ? " " : "") + sentence;
+        if ((currentChunk + '\n\n' + para).trim().length > maxChunkSize) {
+          if (currentChunk) chunks.push(currentChunk.trim());
+          currentChunk = para;
+        } else {
+          currentChunk += (currentChunk ? '\n\n' : '') + para;
+        }
       }
     }
-    
-    // Add the last chunk if there's anything left
-    if (currentChunk.length > 0) {
-      chunks.push(currentChunk.trim());
+    if (currentChunk) chunks.push(currentChunk.trim());
+    // Final safety: split any overlong chunk at the character level
+    const safeChunks: string[] = [];
+    for (const chunk of chunks) {
+      if (chunk.length > maxChunkSize) {
+        console.warn('Chunk still exceeds maxChunkSize after all splits, splitting by characters:', chunk.slice(0, 30) + '...');
+        for (let i = 0; i < chunk.length; i += maxChunkSize) {
+          safeChunks.push(chunk.slice(i, i + maxChunkSize));
+        }
+      } else {
+        safeChunks.push(chunk);
+      }
     }
-    
-    console.log(`Split text into ${chunks.length} chunks`);
-    return chunks;
+    return safeChunks;
   }
 
   /**
@@ -135,70 +158,101 @@ class AudioService {
       throw new Error('ElevenLabs API key is not configured');
     }
 
+    // Step 1: Validate request parameters (empty check, voice check)
+    this.validateTextToSpeechRequest(request);
+
     const { text, voiceId, title } = request;
-    
-    // Import the ElevenLabs service
+    const maxChunkSize = audioConfig.maxChunkSize || 10000;
+
+    // Step 2: Chunk the text if needed
+    const textChunks = this.splitTextIntoChunks(text, maxChunkSize);
+    if (textChunks.length === 0) {
+      throw new Error('Text cannot be empty after chunking');
+    }
+
+    // Step 3: Convert each chunk to speech and combine results if needed
     const { elevenLabsService } = await import('./elevenLabsService');
-    
-    // Create a unique filename for this audio
     const fileName = elevenLabsService.generateUniqueFilename(title, voiceId);
     const filePath = path.join(audioDir, fileName);
-    
-    // Check if file already exists (cache hit)
-    if (fs.existsSync(filePath)) {
-      const stats = fs.statSync(filePath);
-      if (stats.size > 0) {
-        console.log(`Audio file ${fileName} already exists with size ${stats.size} bytes, returning cached version`);
-        return `/audio/${fileName}`;
-      } else {
-        console.log(`Audio file ${fileName} exists but is empty (size: ${stats.size} bytes), regenerating`);
-        // Continue to regenerate the file since it's empty
-      }
-    }
-    
-    // Create necessary directories
-    ensureDirectoryExists(audioDir);
-    
-    try {
-      // Use the ElevenLabs SDK to generate audio
-      console.log(`Using ElevenLabs SDK to generate audio for voice ${voiceId}`);
-      console.log(`Text length: ${text.length} characters`);
-      
-      // Generate audio with the ElevenLabs service
-      const result = await elevenLabsService.generateAudio(text, voiceId, fileName);
-      
-      if (result.success) {
-        console.log(`Audio successfully generated at ${result.filePath}`);
-        
-        // Update analytics
-        await this.updateVoiceAnalytics(voiceId);
-        
-        return `/audio/${fileName}`;
-      } else {
-        console.error(`Error generating audio: ${result.error}`);
-        
-        // Check if the error is related to quota limitations
-        const isQuotaExceeded = result.error?.includes('quota') || 
-                               result.error?.includes('limit') || 
-                               result.error?.includes('exceed');
-        
-        if (isQuotaExceeded || process.env.NODE_ENV === 'development') {
-          console.log('Returning empty file path due to quota exceeded or development mode');
+
+    // If only one chunk, use the original logic
+    if (textChunks.length === 1) {
+      // Check for cache
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        if (stats.size > 0) {
+          console.log(`Audio file ${fileName} already exists with size ${stats.size} bytes, returning cached version`);
           return `/audio/${fileName}`;
+        } else {
+          console.log(`Audio file ${fileName} exists but is empty (size: ${stats.size} bytes), regenerating`);
         }
-        
-        throw new Error(`Failed to generate audio: ${result.error}`);
       }
-    } catch (error: any) {
-      console.error('Error in convertTextToSpeech:', error);
-      
-      // Always create an empty file as a placeholder to avoid crashing the application
-      // This allows the player to handle the error gracefully
-      fs.writeFileSync(filePath, Buffer.from(''));
-      console.log(`Created empty placeholder file for ${fileName} due to error`);
-      
+      ensureDirectoryExists(audioDir);
+      try {
+        const result = await elevenLabsService.generateAudio(textChunks[0], voiceId, fileName);
+        if (result.success) {
+          await this.updateVoiceAnalytics(voiceId);
+          return `/audio/${fileName}`;
+        } else {
+          throw new Error(result.error || 'Failed to generate audio');
+        }
+      } catch (error: any) {
+        fs.writeFileSync(filePath, Buffer.from(''));
+        return `/audio/${fileName}`;
+      }
+    } else {
+      // Multiple chunks: generate audio for each chunk and concatenate
+      const chunkFileNames: string[] = [];
+      for (let i = 0; i < textChunks.length; i++) {
+        const chunkFileName = elevenLabsService.generateUniqueFilename(`${title}_chunk${i+1}`, voiceId);
+        const chunkFilePath = path.join(audioDir, chunkFileName);
+        if (!fs.existsSync(chunkFilePath) || fs.statSync(chunkFilePath).size === 0) {
+          try {
+            const result = await elevenLabsService.generateAudio(textChunks[i], voiceId, chunkFileName);
+            if (!result.success) {
+              throw new Error(result.error || `Failed to generate audio for chunk ${i+1}`);
+            }
+          } catch (error: any) {
+            fs.writeFileSync(chunkFilePath, Buffer.from(''));
+          }
+        }
+        chunkFileNames.push(chunkFileName);
+      }
+      // Concatenate all chunk files into one final file
+      ensureDirectoryExists(audioDir);
+      const writeStream = fs.createWriteStream(filePath);
+      for (const chunkFileName of chunkFileNames) {
+        const chunkFilePath = path.join(audioDir, chunkFileName);
+        if (fs.existsSync(chunkFilePath)) {
+          const data = fs.readFileSync(chunkFilePath);
+          writeStream.write(data);
+        }
+      }
+      writeStream.end();
+      await new Promise(resolve => writeStream.on('finish', resolve));
+      await this.updateVoiceAnalytics(voiceId);
       return `/audio/${fileName}`;
     }
+  }
+
+  /**
+   * Convert text to speech with automatic retry on failure
+   * @param request The text to speech request
+   * @param attempts Maximum number of retry attempts
+   * @returns Promise resolving to the audio file path
+   * @throws Error if all retry attempts fail
+   */
+  async convertTextToSpeechWithRetry(request: TextToSpeechRequest, attempts = audioConfig.retryAttempts): Promise<string> {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await this.convertTextToSpeech(request);
+      } catch (error) {
+        if (i === attempts - 1) throw error;
+        const delay = Math.min(audioConfig.retryDelay * Math.pow(2, i), audioConfig.maxRetryDelay);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    throw new Error('Max retry attempts reached');
   }
 
   /**
@@ -214,8 +268,8 @@ class AudioService {
       console.log(`Chapter text length: ${chapter.text.length} characters`);
       
       // Convert chapter text to audio - our improved convertTextToSpeech now handles chunking
-      const audioUrl = await this.convertTextToSpeech({
-        text: chapter.text, // No longer need to limit characters, the chunking handles long texts
+      const audioUrl = await this.convertTextToSpeechWithRetry({
+        text: chapter.text,
         voiceId,
         title: chapter.title
       });

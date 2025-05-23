@@ -1,9 +1,16 @@
 import React, { useState, useRef } from 'react';
-import { BookOpen, Download, Play, Clock, Music, FileAudio, AlertTriangle } from 'lucide-react';
+import { BookOpen, Download, Play, Clock, Music, FileAudio, AlertTriangle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import GlobalAudioPlayer from './GlobalAudioPlayer';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Progress } from "@/components/ui/progress";
 
 interface Chapter {
   id: number;
@@ -15,12 +22,49 @@ interface Chapter {
 
 interface ChaptersSectionProps {
   chapters: Chapter[];
+  chapterProgress?: { status: string; percent: number; error?: string }[];
 }
 
-const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
+const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProgress = [] }) => {
   const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   const globalPlayerRef = useRef<HTMLDivElement>(null);
+
+  // Maintain chapter durations in state
+  const [chapterDurations, setChapterDurations] = React.useState<number[]>(
+    chapters.map((ch) => ch.duration)
+  );
+
+  // Update durations if chapters prop changes (e.g., new book loaded)
+  React.useEffect(() => {
+    setChapterDurations(chapters.map((ch) => ch.duration));
+  }, [chapters]);
+
+  // Handler to update duration from GlobalAudioPlayer
+  const handleDurationUpdate = (chapterIndex: number, duration: number) => {
+    setChapterDurations((prev) => {
+      if (prev[chapterIndex] === duration) return prev;
+      const updated = [...prev];
+      updated[chapterIndex] = duration;
+      return updated;
+    });
+  };
+
+  // Calculate overall progress
+  const overallProgress = React.useMemo(() => {
+    if (!chapterProgress.length) return 0;
+    const totalProgress = chapterProgress.reduce((sum, progress) => sum + progress.percent, 0);
+    return Math.round(totalProgress / chapterProgress.length);
+  }, [chapterProgress]);
+
+  // Calculate overall status
+  const overallStatus = React.useMemo(() => {
+    if (!chapterProgress.length) return 'idle';
+    if (chapterProgress.some(p => p.status === 'failed')) return 'failed';
+    if (chapterProgress.some(p => p.status === 'processing')) return 'processing';
+    if (chapterProgress.every(p => p.status === 'ready')) return 'ready';
+    return 'idle';
+  }, [chapterProgress]);
 
   // Function to format file size
   const formatFileSize = (bytes: number): string => {
@@ -36,8 +80,8 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
     return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
   };
 
-  // Calculate total duration
-  const totalDuration = chapters.reduce((sum, chapter) => sum + chapter.duration, 0);
+  // Calculate total duration using updated durations
+  const totalDuration = chapterDurations.reduce((sum, d) => sum + d, 0);
   const totalDurationFormatted = formatDuration(totalDuration);
 
   // Calculate total size
@@ -114,6 +158,36 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
     }, 100);
   };
 
+  // Get status badge color and icon
+  const getStatusBadgeProps = (status: string) => {
+    switch (status) {
+      case 'processing':
+        return {
+          className: 'bg-blue-100 text-blue-700',
+          icon: <span className="animate-spin inline-block h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full mr-1"></span>,
+          text: 'Processing'
+        };
+      case 'ready':
+        return {
+          className: 'bg-green-100 text-green-700',
+          icon: null,
+          text: 'Ready'
+        };
+      case 'failed':
+        return {
+          className: 'bg-red-100 text-red-700',
+          icon: <AlertTriangle className="h-3 w-3 mr-1" />,
+          text: 'Failed'
+        };
+      default:
+        return {
+          className: 'bg-gray-100 text-gray-700',
+          icon: null,
+          text: 'Pending'
+        };
+    }
+  };
+
   return (
     <section>
       <h2 className="font-bold text-xl text-gray-800 mb-4 flex items-center">
@@ -121,12 +195,40 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
         Your Audiobook Chapters
       </h2>
       
+      {/* Overall Progress */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm font-medium text-gray-700">Overall Progress</span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Info className="h-4 w-4 text-gray-400" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Progress across all chapters</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+          <span className="text-sm text-gray-600">{overallProgress}%</span>
+        </div>
+        <Progress value={overallProgress} className="h-2" />
+        <div className="mt-1 text-xs text-gray-500">
+          {overallStatus === 'processing' && 'Processing chapters...'}
+          {overallStatus === 'ready' && 'All chapters ready'}
+          {overallStatus === 'failed' && 'Some chapters failed to process'}
+          {overallStatus === 'idle' && 'Waiting to start...'}
+        </div>
+      </div>
+      
       {/* Global Audio Player */}
       <div className="mb-6" ref={globalPlayerRef}>
         <GlobalAudioPlayer 
-          chapters={chapters}
+          chapters={chapters.map((ch, i) => ({ ...ch, duration: chapterDurations[i] }))}
           currentChapterIndex={selectedChapterIndex}
           onChapterChange={setSelectedChapterIndex}
+          onDurationUpdate={handleDurationUpdate}
         />
         {chapters.length > 0 && chapters[0].size === 0 && (
           <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">
@@ -161,70 +263,111 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters }) => {
       
       {/* Chapter list with scrolling */}
       <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2" style={{ scrollbarWidth: 'thin' }}>
-        {chapters.map((chapter, index) => (
-          <div 
-            key={chapter.id} 
-            className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:border-primary/30 transition-colors duration-200"
-          >
-            <div className="p-3">
-              <div className="flex justify-between items-center">
-                <h3 className="font-medium text-gray-800 truncate flex-1">{chapter.title}</h3>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-primary hover:text-primary-dark hover:bg-primary/10 h-8 mr-1"
-                  onClick={() => playChapter(index)}
-                >
-                  <Play className="h-4 w-4 mr-1" />
-                  Play
-                </Button>
-              </div>
-              
-              <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
-                <div className="flex items-center">
-                  <Clock className="h-3.5 w-3.5 mr-1 text-gray-400" />
-                  {formatDuration(chapter.duration)}
+        {chapters.map((chapter, index) => {
+          const chapterStatus = chapterProgress[index]?.status || 'idle';
+          const statusProps = getStatusBadgeProps(chapterStatus);
+          const isChapterReady = chapterStatus === 'ready';
+          
+          return (
+            <div 
+              key={chapter.id} 
+              className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:border-primary/30 transition-colors duration-200"
+            >
+              <div className="p-3">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-medium text-gray-800 truncate flex-1">{chapter.title}</h3>
+                  {/* Per-chapter status badge with tooltip */}
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <span className={`ml-2 text-xs px-2 py-1 rounded-full font-semibold flex items-center ${statusProps.className}`}>
+                          {statusProps.icon}
+                          {statusProps.text}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {chapterProgress[index]?.error ? (
+                          <p className="text-red-600">{chapterProgress[index].error}</p>
+                        ) : (
+                          <p>{statusProps.text}</p>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={`text-primary hover:text-primary-dark hover:bg-primary/10 h-8 mr-1 transition-all duration-200 ${
+                      !isChapterReady ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                    onClick={() => isChapterReady && playChapter(index)}
+                    disabled={!isChapterReady}
+                  >
+                    <Play className="h-4 w-4 mr-1" />
+                    Play
+                  </Button>
                 </div>
-                <div className="flex items-center">
-                  <span className="mr-1">Size:</span>
-                  {formatFileSize(chapter.size)}
+                {/* Per-chapter progress bar */}
+                {chapterProgress[index] && chapterProgress[index].status === 'processing' && (
+                  <div className="w-full bg-gray-100 rounded h-2 mt-2">
+                    <div
+                      className="bg-blue-400 h-2 rounded transition-all duration-300"
+                      style={{ width: `${chapterProgress[index].percent}%` }}
+                    ></div>
+                  </div>
+                )}
+                {/* Error message if failed */}
+                {chapterProgress[index] && chapterProgress[index].status === 'failed' && chapterProgress[index].error && (
+                  <div className="text-xs text-red-600 mt-1">{chapterProgress[index].error}</div>
+                )}
+                <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
+                  <div className="flex items-center">
+                    <Clock className="h-3.5 w-3.5 mr-1 text-gray-400" />
+                    {formatDuration(chapterDurations[index])}
+                  </div>
+                  <div className="flex items-center">
+                    <span className="mr-1">Size:</span>
+                    {formatFileSize(chapter.size)}
+                  </div>
+                  <a 
+                    href={isChapterReady ? chapter.audioUrl : undefined}
+                    download={isChapterReady ? `${chapter.title ? chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'audio'}.mp3` : undefined}
+                    className={`text-teal-600 hover:text-teal-700 flex items-center transition-all duration-200 ${
+                      !isChapterReady ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''
+                    }`}
+                  >
+                    <Download className="h-3.5 w-3.5 mr-1" />
+                    Download
+                  </a>
                 </div>
-                <a 
-                  href={chapter.audioUrl}
-                  download={`${chapter.title ? chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'audio'}.mp3`}
-                  className="text-teal-600 hover:text-teal-700 flex items-center"
-                >
-                  <Download className="h-3.5 w-3.5 mr-1" />
-                  Download
-                </a>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       
       {/* Download all button */}
-      {chapters.length > 1 && (
-        <div className="mt-6 text-center">
-          <Button 
-            onClick={handleDownloadAll}
-            className="bg-teal-600 hover:bg-teal-700 text-white font-medium shadow-md transition-all"
-            disabled={isDownloading}
-          >
-            {isDownloading ? (
-              <>
-                <span className="animate-spin h-4 w-4 border-2 border-white border-opacity-50 border-t-white rounded-full mr-2"></span>
-                Creating ZIP file...
-              </>
-            ) : (
-              <>
-                <Download className="h-4 w-4 mr-2" />
-                Download All Chapters
-              </>
-            )}
-          </Button>
-        </div>
-      )}
+      <div className="mt-4 flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-sm"
+          onClick={handleDownloadAll}
+          disabled={isDownloading || !chapters.every((_, i) => chapterProgress[i]?.status === 'ready')}
+        >
+          {isDownloading ? (
+            <>
+              <span className="animate-spin inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-2"></span>
+              Downloading...
+            </>
+          ) : (
+            <>
+              <Download className="h-4 w-4 mr-2" />
+              Download All Chapters
+            </>
+          )}
+        </Button>
+      </div>
     </section>
   );
 };

@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { BookOpen, List, FileText, ChevronRight } from 'lucide-react';
-import { EpubParseResult, EpubChapter } from '@/lib/epubParserJszip';
+import { EpubParseResult, EpubChapter, loadChapterContent } from '@/lib/epubParserJszip';
 
 interface EpubPreviewSectionProps {
   epubData: EpubParseResult;
@@ -19,6 +19,8 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState('toc');
   const [selectedChapter, setSelectedChapter] = useState<EpubChapter | null>(null);
+  const [chapterContentCache, setChapterContentCache] = useState<Record<string, {text: string, htmlContent: string}>>({});
+  const [isLoadingChapter, setIsLoadingChapter] = useState(false);
   
   // Format all chapters into a markdown string for processing
   const processAllContent = () => {
@@ -39,14 +41,22 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
     onUseAllContent(allContent);
   };
   
-  // Handle chapter selection
-  const handleChapterClick = (chapter: EpubChapter) => {
+  // Handle chapter selection with lazy loading
+  const handleChapterClick = async (chapter: EpubChapter) => {
     setSelectedChapter(chapter);
-    
-    // If the chapter has text already, we can process it immediately
-    if (chapter.text) {
-      const chapterContent = `## ${chapter.title}\n\n${chapter.text}`;
-      onSelectChapter(chapterContent, chapter.title);
+    setActiveTab('content');
+    // If already cached, do nothing
+    if (chapterContentCache[chapter.id]) return;
+    // If no zipInstance or opfDirWithSlash, cannot load
+    if (!epubData.zipInstance || !epubData.opfDirWithSlash) return;
+    setIsLoadingChapter(true);
+    try {
+      const content = await loadChapterContent(epubData.zipInstance, epubData.opfDirWithSlash, chapter);
+      setChapterContentCache(prev => ({ ...prev, [chapter.id]: content }));
+    } catch (e) {
+      setChapterContentCache(prev => ({ ...prev, [chapter.id]: { text: 'Failed to load chapter content.', htmlContent: '' } }));
+    } finally {
+      setIsLoadingChapter(false);
     }
   };
   
@@ -233,47 +243,50 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
           {/* Content Preview Tab */}
           <TabsContent value="content" className="pt-4 relative">
             {selectedChapter ? (
-              <>
-                <div className="bg-blue-50 p-2 rounded-md mb-3 border border-blue-100">
-                  <h3 className="font-medium text-blue-700">{selectedChapter.title}</h3>
+              isLoadingChapter ? (
+                <div className="flex items-center justify-center h-40">
+                  <span className="animate-spin inline-block h-8 w-8 border-4 border-blue-400 border-t-transparent rounded-full mr-2"></span>
+                  <span className="text-blue-600 font-medium">Loading chapter content...</span>
                 </div>
-                
-                <ScrollArea className="h-60 rounded-md border p-4">
-                  <div className="prose prose-sm max-w-none">
-                    {selectedChapter.htmlContent ? (
-                      <div dangerouslySetInnerHTML={{ __html: selectedChapter.htmlContent }} />
-                    ) : (
-                      <p>{selectedChapter.text || 'Loading chapter content...'}</p>
-                    )}
+              ) : (
+                <>
+                  <div className="bg-blue-50 p-2 rounded-md mb-3 border border-blue-100">
+                    <h3 className="font-medium text-blue-700">{selectedChapter.title}</h3>
                   </div>
-                </ScrollArea>
-                
-                <div className="mt-4 flex justify-between">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    className="text-xs"
-                    onClick={() => setActiveTab('toc')}
-                  >
-                    Back to Contents
-                  </Button>
-                  
-                  {selectedChapter.text && (
+                  <ScrollArea className="h-60 rounded-md border p-4">
+                    <div className="prose prose-sm max-w-none">
+                      {chapterContentCache[selectedChapter.id]?.htmlContent ? (
+                        <div dangerouslySetInnerHTML={{ __html: chapterContentCache[selectedChapter.id].htmlContent }} />
+                      ) : (
+                        <p>{chapterContentCache[selectedChapter.id]?.text || 'No content available.'}</p>
+                      )}
+                    </div>
+                  </ScrollArea>
+                  <div className="mt-4 flex justify-between">
                     <Button 
-                      variant="default" 
+                      variant="outline" 
                       size="sm"
                       className="text-xs"
-                      onClick={() => {
-                        // Use text content for processing even if HTML is available to avoid markup issues
-                        const chapterContent = `## ${selectedChapter.title}\n\n${selectedChapter.text || ''}`;
-                        onSelectChapter(chapterContent, selectedChapter.title);
-                      }}
+                      onClick={() => setActiveTab('toc')}
                     >
-                      Use This Chapter
+                      Back to Contents
                     </Button>
-                  )}
-                </div>
-              </>
+                    {chapterContentCache[selectedChapter.id]?.text && (
+                      <Button 
+                        variant="default" 
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => {
+                          const chapterContent = `## ${selectedChapter.title}\n\n${chapterContentCache[selectedChapter.id]?.text || ''}`;
+                          onSelectChapter(chapterContent, selectedChapter.title);
+                        }}
+                      >
+                        Use This Chapter
+                      </Button>
+                    )}
+                  </div>
+                </>
+              )
             ) : (
               <div className="text-center p-10 bg-gray-50 rounded-md border border-gray-200">
                 <BookOpen className="h-10 w-10 mx-auto text-gray-400 mb-2" />

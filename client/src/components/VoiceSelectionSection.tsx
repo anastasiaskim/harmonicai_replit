@@ -1,50 +1,52 @@
 import React, { useState } from 'react';
-import { Card, CardContent, CardTitle, CardDescription } from '@/components/ui/card';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Mic2, Play, Volume2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardTitle, CardDescription } from './ui/card';
+import { RadioGroup, RadioGroupItem } from './ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Label } from './ui/label';
+import { Mic2, Play, Volume2, Filter } from 'lucide-react';
+import { Button } from './ui/button';
+import { Skeleton } from './ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { useToast } from '@/components/ui/use-toast';
+import axios from 'axios';
 
 // Hardcoded ElevenLabs voices
 const ELEVENLABS_VOICES = [
   {
     id: 1,
-    voiceId: "rachel",
-    name: "Rachel",
-    description: "Warm, natural female voice with clear enunciation",
+    voiceId: "rCmVtv8cYU60uhlsOo1M", // Ana
+    name: "Ana",
+    description: "Upbeat, young, female, English (British), Narrative & Story",
     gender: "female",
-    accent: "American",
-    style: "conversational"
+    accent: "English (British)",
+    style: "Upbeat"
   },
   {
     id: 2,
-    voiceId: "thomas",
-    name: "Thomas",
-    description: "Deep, authoritative male voice ideal for non-fiction",
-    gender: "male", 
-    accent: "American", 
-    style: "authoritative"
+    voiceId: "LruHrtVF6PSyGItzMNHS", // Benjamin
+    name: "Benjamin - Deep, Warm, Calming",
+    description: "Relaxed, middle-aged, male, English (American), Narrative & Story",
+    gender: "male",
+    accent: "English (American)",
+    style: "Relaxed"
   },
   {
     id: 3,
-    voiceId: "emily",
-    name: "Emily",
-    description: "Soft, expressive voice perfect for fiction narratives",
-    gender: "female", 
-    accent: "British", 
-    style: "expressive"
+    voiceId: "uju3wxzG5OhpWcoi3SMy", // Michael C. Vincent
+    name: "Michael C. Vincent",
+    description: "Confident, middle-aged, male, English (American), Narrative & Story",
+    gender: "male",
+    accent: "English (American)",
+    style: "Confident"
   },
   {
     id: 4,
-    voiceId: "james",
-    name: "James",
-    description: "British accent with rich tone for narratives and storytelling",
-    gender: "male", 
-    accent: "British", 
-    style: "storytelling"
+    voiceId: "5l5f8iK3YPeGga21rQIX", // Adeline
+    name: "Adeline",
+    description: "Middle-aged, female, English (American), Narrative & Story",
+    gender: "female",
+    accent: "English (American)",
+    style: "Narrative & Story"
   }
 ];
 
@@ -73,21 +75,83 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
 }) => {
   // For Phase 2, use hardcoded voices instead of API voices
   const voices = ELEVENLABS_VOICES;
+  const { toast } = useToast();
   
   // State to track the currently previewing voice
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
-  
-  // Function to play voice preview (in a real app, this would fetch a sample from ElevenLabs)
-  const playVoicePreview = (voiceId: string) => {
-    // Show the voice as previewing
-    setPreviewingVoice(voiceId);
+  const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
+
+  // Add state for filters
+  const [filters, setFilters] = useState({
+    gender: 'all',
+    accent: 'all',
+    style: 'all'
+  });
+
+  // Add filtered voices logic
+  const filteredVoices = voices.filter(voice => {
+    if (filters.gender !== 'all' && voice.gender !== filters.gender) return false;
+    if (filters.accent !== 'all' && voice.accent !== filters.accent) return false;
+    if (filters.style !== 'all' && voice.style !== filters.style) return false;
+    return true;
+  });
+
+  // Function to generate preview audio
+  const generatePreview = async (voiceId: string, text: string): Promise<string> => {
+    try {
+      const response = await axios.post('/api/preview-voice', {
+        voiceId,
+        text
+      });
+      return response.data.audioUrl;
+    } catch (error) {
+      console.error('Error generating preview:', error);
+      throw new Error('Failed to generate voice preview');
+    }
+  };
+
+  // Function to play voice preview
+  const previewVoice = async (voiceId: string) => {
+    const previewText = "Hello, this is a preview of my voice.";
     
-    // This is a placeholder - in a real implementation, we would fetch and play 
-    // an audio sample from the ElevenLabs API
-    setTimeout(() => {
-      alert(`Playing preview of ${voiceId} voice. In a real implementation, this would play a sample audio clip.`);
+    // Stop any currently playing preview
+    if (previewAudio) {
+      previewAudio.pause();
+      previewAudio.currentTime = 0;
+    }
+    
+    try {
+      setPreviewingVoice(voiceId);
+      const audioUrl = await generatePreview(voiceId, previewText);
+      const audio = new Audio(audioUrl);
+      
+      // Handle audio completion
+      audio.onended = () => {
+        setPreviewingVoice(null);
+        setPreviewAudio(null);
+      };
+      
+      // Handle audio errors
+      audio.onerror = () => {
+        setPreviewingVoice(null);
+        setPreviewAudio(null);
+        toast({
+          title: "Error",
+          description: "Failed to play voice preview",
+          variant: "destructive"
+        });
+      };
+      
+      setPreviewAudio(audio);
+      await audio.play();
+    } catch (error) {
       setPreviewingVoice(null);
-    }, 500);
+      toast({
+        title: "Error",
+        description: "Failed to preview voice",
+        variant: "destructive"
+      });
+    }
   };
 
   // Get the currently selected voice object
@@ -104,6 +168,71 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
         <CardDescription className="text-gray-500 mb-4">
           Choose a voice for your audiobook narration
         </CardDescription>
+
+        {/* Add filter UI */}
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium flex items-center">
+              <Filter className="h-4 w-4 mr-2" />
+              Gender
+            </Label>
+            <Select
+              value={filters.gender}
+              onValueChange={(value) => setFilters(prev => ({ ...prev, gender: value }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select gender" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Genders</SelectItem>
+                <SelectItem value="male">Male</SelectItem>
+                <SelectItem value="female">Female</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium flex items-center">
+              <Filter className="h-4 w-4 mr-2" />
+              Accent
+            </Label>
+            <Select
+              value={filters.accent}
+              onValueChange={(value) => setFilters(prev => ({ ...prev, accent: value }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select accent" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Accents</SelectItem>
+                <SelectItem value="American">American</SelectItem>
+                <SelectItem value="British">British</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium flex items-center">
+              <Filter className="h-4 w-4 mr-2" />
+              Style
+            </Label>
+            <Select
+              value={filters.style}
+              onValueChange={(value) => setFilters(prev => ({ ...prev, style: value }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select style" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Styles</SelectItem>
+                <SelectItem value="conversational">Conversational</SelectItem>
+                <SelectItem value="authoritative">Authoritative</SelectItem>
+                <SelectItem value="expressive">Expressive</SelectItem>
+                <SelectItem value="storytelling">Storytelling</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         
         <Tabs defaultValue="grid" className="mb-4">
           <TabsList className="grid w-full grid-cols-2">
@@ -117,7 +246,7 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
               onValueChange={onVoiceSelect}
               className="grid grid-cols-1 md:grid-cols-2 gap-3"
             >
-              {voices.map((voice) => (
+              {filteredVoices.map((voice) => (
                 <div 
                   key={voice.id} 
                   className={`flex flex-col p-4 rounded-lg border ${
@@ -163,7 +292,7 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
                       }`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        playVoicePreview(voice.voiceId);
+                        previewVoice(voice.voiceId);
                       }}
                     >
                       {previewingVoice === voice.voiceId ? (
@@ -191,7 +320,7 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
                   <SelectValue placeholder="Select a voice" />
                 </SelectTrigger>
                 <SelectContent>
-                  {voices.map((voice) => (
+                  {filteredVoices.map((voice) => (
                     <SelectItem key={voice.id} value={voice.voiceId}>
                       {voice.name} - {voice.accent} {voice.gender}
                     </SelectItem>
@@ -227,9 +356,13 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
                       variant="outline" 
                       size="sm" 
                       className="flex items-center"
-                      onClick={() => playVoicePreview(selectedVoiceObj.voiceId)}
+                      onClick={() => previewVoice(selectedVoiceObj.voiceId)}
                     >
-                      <Play className="h-3 w-3 mr-1" />
+                      {previewingVoice === selectedVoiceObj.voiceId ? (
+                        <Volume2 className="h-3 w-3 mr-1" />
+                      ) : (
+                        <Play className="h-3 w-3 mr-1" />
+                      )}
                       <span className="text-xs">Preview</span>
                     </Button>
                   </div>
