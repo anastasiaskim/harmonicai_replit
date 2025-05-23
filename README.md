@@ -97,6 +97,32 @@ ELEVENLABS_API_KEY=your_api_key_here
 DATABASE_URL=your_database_url_here
 ```
 
+### Security Best Practices
+
+1. **Never commit `.env` files to version control**
+   - Add `.env` to your `.gitignore` file
+   - Use `.env.example` as a template for required variables
+   - Keep sensitive keys secure and rotate them periodically
+
+2. **API Key Security**
+   - Store your ElevenLabs API key securely
+   - Never expose API keys in client-side code
+   - Use environment variables for all sensitive credentials
+   - Consider using a secrets management service in production
+
+3. **ElevenLabs API Usage**
+   - Free tier: 10,000 characters per month
+   - Rate limits: 100 requests per minute
+   - Character limits: 5,000 characters per request
+   - Monitor usage in your ElevenLabs dashboard
+   - Consider implementing request queuing for high-volume usage
+
+4. **Production Deployment**
+   - Use different API keys for development and production
+   - Implement proper error handling for API rate limits
+   - Set up monitoring for API usage and errors
+   - Consider implementing a caching layer for frequently used audio
+
 ## License
 
 MIT

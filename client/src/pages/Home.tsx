@@ -195,8 +195,17 @@ const Home = () => {
       setIsGenerating(false);
       return;
     }
-    // Initialize per-chapter progress
+
+    // Initialize progress tracking
+    setGenerationProgress({
+      current: 0,
+      total: nonEmptyChapters.length,
+      status: 'generating'
+    });
+    
+    // Initialize per-chapter progress based on nonEmptyChapters
     setChapterProgress(nonEmptyChapters.map(() => ({ status: 'idle', percent: 0 })));
+    
     // Temporary array to collect processed chapters
     const processedChapters: GeneratedChapter[] = [];
 
@@ -207,16 +216,25 @@ const Home = () => {
       });
       for (let i = 0; i < nonEmptyChapters.length; i++) {
         const chapter = nonEmptyChapters[i];
+        // Update overall progress
+        setGenerationProgress(prev => ({
+          ...prev,
+          current: i,
+          status: 'generating'
+        }));
+
         // Set chapter to processing
         setChapterProgress(prev => {
           const updated = [...prev];
           updated[i] = { status: 'processing', percent: 0 };
           return updated;
         });
+
         toast({
           title: "Processing Chapter",
           description: `Converting chapter ${i+1} of ${nonEmptyChapters.length}: "${chapter.title}"`,
         });
+
         try {
           const response = await fetch('/api/text-to-speech', {
             method: 'POST',
@@ -228,21 +246,41 @@ const Home = () => {
               voiceId: selectedVoice,
             }),
           });
+
           if (!response.ok) {
             const errorData = await response.json();
             throw new Error(
               errorData.error || `Failed to generate audio for chapter "${chapter.title}"`
             );
           }
+
           const data = await response.json();
           if (data.success && data.chapters && data.chapters.length > 0) {
             const generatedChapter = data.chapters[0];
             processedChapters.push(generatedChapter);
+            
+            // Update chapter progress to match the current state of processedChapters
             setChapterProgress(prev => {
               const updated = [...prev];
+              // Ensure the progress array matches the length of processedChapters
+              while (updated.length < processedChapters.length) {
+                updated.push({ status: 'idle', percent: 0 });
+              }
+              // Update the current chapter's status
               updated[i] = { status: 'ready', percent: 100 };
               return updated;
             });
+
+            // Update overall progress only if not in error state
+            setGenerationProgress(prev => {
+              if (prev.status === 'error') return prev;
+              return {
+                ...prev,
+                current: i + 1,
+                status: i + 1 === nonEmptyChapters.length ? 'complete' : 'generating'
+              };
+            });
+
             if (generatedChapter.size === 0) {
               toast({
                 title: "API Limitation",
@@ -274,6 +312,10 @@ const Home = () => {
           } else {
             setChapterProgress(prev => {
               const updated = [...prev];
+              // Ensure the progress array matches the length of processedChapters
+              while (updated.length < processedChapters.length) {
+                updated.push({ status: 'idle', percent: 0 });
+              }
               updated[i] = { status: 'failed', percent: 100, error: `Failed to process chapter "${chapter.title}"` };
               return updated;
             });
@@ -282,6 +324,10 @@ const Home = () => {
         } catch (err: any) {
           setChapterProgress(prev => {
             const updated = [...prev];
+            // Ensure the progress array matches the length of processedChapters
+            while (updated.length < processedChapters.length) {
+              updated.push({ status: 'idle', percent: 0 });
+            }
             updated[i] = { status: 'failed', percent: 100, error: err.message || 'Failed to generate audiobook' };
             return updated;
           });
@@ -291,9 +337,18 @@ const Home = () => {
             description: err.message || 'An error occurred while generating the audiobook.',
             variant: "destructive",
           });
+          // Update overall progress to error state and break the processing loop
+          setGenerationProgress(prev => ({
+            ...prev,
+            status: 'error'
+          }));
+          break; // Exit the loop on first error
         }
-        setGeneratedChapters([...processedChapters]);
       }
+
+      // Update generated chapters state once after all processing is complete
+      setGeneratedChapters(processedChapters);
+
       toast({
         title: "Audiobook Generated",
         description: `Successfully created ${processedChapters.length} audio chapters.`,
@@ -305,6 +360,11 @@ const Home = () => {
         description: err.message || 'An error occurred while generating the audiobook.',
         variant: "destructive",
       });
+      // Update overall progress to error state
+      setGenerationProgress(prev => ({
+        ...prev,
+        status: 'error'
+      }));
     } finally {
       setIsGenerating(false);
     }

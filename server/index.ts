@@ -1,5 +1,5 @@
 import 'dotenv/config';
-console.log('ELEVENLABS_API_KEY:', process.env.ELEVENLABS_API_KEY);
+console.log('ELEVENLABS_API_KEY:', process.env.ELEVENLABS_API_KEY ? '[SET]' : '[NOT SET]');
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";

@@ -43,6 +43,11 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
   // Handler to update duration from GlobalAudioPlayer
   const handleDurationUpdate = (chapterIndex: number, duration: number) => {
     setChapterDurations((prev) => {
+      // Guard against invalid chapter index
+      if (chapterIndex < 0 || chapterIndex >= prev.length) {
+        console.warn(`Invalid chapter index ${chapterIndex} for duration update`);
+        return prev;
+      }
       if (prev[chapterIndex] === duration) return prev;
       const updated = [...prev];
       updated[chapterIndex] = duration;
@@ -188,6 +193,29 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
     }
   };
 
+  // Helper function to check if a chapter is ready for playback/download
+  const isChapterReady = (index: number): boolean => {
+    // If no progress data, assume chapter is ready if it has a valid audioUrl
+    if (!chapterProgress || chapterProgress.length === 0) {
+      return Boolean(chapters[index]?.audioUrl) && chapters[index]?.size > 0;
+    }
+    return chapterProgress[index]?.status === 'ready';
+  };
+
+  // Helper function to check if all chapters are ready
+  const areAllChaptersReady = (): boolean => {
+    // If no progress data, check if all chapters have valid audioUrl and size
+    if (!chapterProgress || chapterProgress.length === 0) {
+      return chapters.every(chapter => chapter.audioUrl && chapter.size > 0);
+    }
+
+    // Check if all chapters with reported progress are ready
+    // This allows downloads when some chapters don't have progress data yet
+    return chapterProgress.every(progress => progress.status === 'ready') &&
+           // Also ensure all chapters have valid audio data
+           chapters.every(chapter => chapter.audioUrl && chapter.size > 0);
+  };
+
   return (
     <section>
       <h2 className="font-bold text-xl text-gray-800 mb-4 flex items-center">
@@ -266,7 +294,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
         {chapters.map((chapter, index) => {
           const chapterStatus = chapterProgress[index]?.status || 'idle';
           const statusProps = getStatusBadgeProps(chapterStatus);
-          const isChapterReady = chapterStatus === 'ready';
+          const ready = isChapterReady(index);
           
           return (
             <div 
@@ -298,13 +326,22 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
                     variant="ghost"
                     size="sm"
                     className={`text-primary hover:text-primary-dark hover:bg-primary/10 h-8 mr-1 transition-all duration-200 ${
-                      !isChapterReady ? 'opacity-50 cursor-not-allowed' : ''
+                      !ready ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
-                    onClick={() => isChapterReady && playChapter(index)}
-                    disabled={!isChapterReady}
+                    onClick={() => ready && playChapter(index)}
+                    disabled={!ready}
                   >
-                    <Play className="h-4 w-4 mr-1" />
-                    Play
+                    {chapterStatus === 'processing' ? (
+                      <>
+                        <span className="animate-spin inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-1"></span>
+                        Processing
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-1" />
+                        Play
+                      </>
+                    )}
                   </Button>
                 </div>
                 {/* Per-chapter progress bar */}
@@ -330,10 +367,10 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
                     {formatFileSize(chapter.size)}
                   </div>
                   <a 
-                    href={isChapterReady ? chapter.audioUrl : undefined}
-                    download={isChapterReady ? `${chapter.title ? chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'audio'}.mp3` : undefined}
+                    href={ready ? chapter.audioUrl || undefined : undefined}
+                    download={ready ? `${chapter.title ? chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'audio'}.mp3` : undefined}
                     className={`text-teal-600 hover:text-teal-700 flex items-center transition-all duration-200 ${
-                      !isChapterReady ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''
+                      !ready ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''
                     }`}
                   >
                     <Download className="h-3.5 w-3.5 mr-1" />
@@ -353,7 +390,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
           size="sm"
           className="text-sm"
           onClick={handleDownloadAll}
-          disabled={isDownloading || !chapters.every((_, i) => chapterProgress[i]?.status === 'ready')}
+          disabled={isDownloading || !areAllChaptersReady()}
         >
           {isDownloading ? (
             <>

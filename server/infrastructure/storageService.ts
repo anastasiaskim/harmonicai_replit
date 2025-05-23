@@ -1,161 +1,143 @@
 /**
  * Infrastructure Layer: Storage Service
- * Simulates S3-like storage functionality for files
+ * Handles file storage using Supabase Storage
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { supabaseAdmin } from './supabaseClient';
 
 export interface StoredFile {
-  key: string;         // Unique identifier for the file (S3 key)
+  key: string;         // Unique identifier for the file (storage key)
   fileName: string;    // Original file name
-  filePath: string;    // Local file path
   fileUrl: string;     // URL to access the file
   mimeType: string;    // File MIME type
   size: number;        // File size in bytes
   createdAt: string;   // ISO timestamp of when the file was created
 }
 
-class StorageService {
-  /**
-   * Store a file in the storage system
-   * In production, this would upload to S3 or similar cloud storage
-   */
-  async storeFile(
-    fileBuffer: Buffer, 
-    key: string, 
-    originalFileName: string, 
-    mimeType: string
-  ): Promise<StoredFile> {
+export class StorageService {
+  private readonly bucketName: string;
+
+  constructor() {
+    this.bucketName = process.env.SUPABASE_STORAGE_BUCKET || 'audio-files';
+  }
+
+  async uploadFile(filePath: string, key: string, mimeType: string): Promise<StoredFile> {
     try {
-      // Get the directory from the key
-      const directory = path.dirname(key);
-      const localDirectory = path.join(process.cwd(), directory);
-      
-      // Ensure the directory exists
-      if (!fs.existsSync(localDirectory)) {
-        fs.mkdirSync(localDirectory, { recursive: true });
-      }
-      
-      // Define the full path
-      const filePath = path.join(process.cwd(), key);
-      
-      // Write the file
-      fs.writeFileSync(filePath, fileBuffer);
-      
-      // Get file size
-      const stats = fs.statSync(filePath);
-      
-      // Create the URL for the file
-      // In a real implementation, this would be a CDN or S3 URL
-      const fileUrl = `/${key}`;
-      
-      const storedFile: StoredFile = {
+      const fileContent = fs.readFileSync(filePath);
+      const fileName = path.basename(filePath);
+
+      const { data, error } = await supabaseAdmin.storage
+        .from(this.bucketName)
+        .upload(key, fileContent, {
+          contentType: mimeType,
+          upsert: true
+        });
+
+      if (error) throw error;
+
+      const { data: urlData } = supabaseAdmin.storage
+        .from(this.bucketName)
+        .getPublicUrl(key);
+
+      return {
         key,
-        fileName: originalFileName,
-        filePath,
-        fileUrl,
+        fileName,
+        fileUrl: urlData.publicUrl,
         mimeType,
-        size: stats.size,
+        size: fileContent.length,
         createdAt: new Date().toISOString()
       };
-      
-      return storedFile;
     } catch (error) {
-      console.error('Error storing file:', error);
-      throw new Error('Failed to store file');
+      console.error('Error uploading file:', error);
+      throw error;
     }
   }
 
-  /**
-   * Get a file from storage by its key
-   */
-  getFile(key: string): StoredFile | null {
+  async getFile(key: string): Promise<Buffer | null> {
     try {
-      const filePath = path.join(process.cwd(), key);
-      
-      if (!fs.existsSync(filePath)) {
-        return null;
+      const { data, error } = await supabaseAdmin.storage
+        .from(this.bucketName)
+        .download(key);
+
+      if (error) throw error;
+      if (!data) return null;
+
+      return Buffer.from(await data.arrayBuffer());
+    } catch (error) {
+      console.error('Error retrieving file:', error);
+      return null;
+    }
+  }
+
+  async deleteFile(key: string): Promise<boolean> {
+    try {
+      const { error } = await supabaseAdmin.storage
+        .from(this.bucketName)
+        .remove([key]);
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      return false;
+    }
+  }
+
+  async listFiles(prefix: string): Promise<string[]> {
+    try {
+      const { data, error } = await supabaseAdmin.storage
+        .from(this.bucketName)
+        .list(prefix);
+
+      if (error) throw error;
+      return data.map(item => item.name);
+    } catch (error) {
+      console.error('Error listing files:', error);
+      return [];
+    }
+  }
+
+  async getFileMetadata(key: string): Promise<{
+    LastModified: Date;
+    ContentLength: number;
+    ContentType: string;
+    ETag: string;
+  } | null> {
+    try {
+      const { data: urlData } = supabaseAdmin.storage
+        .from(this.bucketName)
+        .getPublicUrl(key);
+
+      // Get file info
+      const { data: fileData, error: fileError } = await supabaseAdmin.storage
+        .from(this.bucketName)
+        .list(path.dirname(key));
+
+      if (fileError) throw fileError;
+
+      const fileInfo = fileData.find(file => file.name === path.basename(key));
+      if (!fileInfo) {
+        throw new Error(`File not found: ${key}`);
       }
-      
-      const stats = fs.statSync(filePath);
-      const fileName = path.basename(key);
-      const mimeType = this.getMimeTypeFromKey(key);
-      
-      const storedFile: StoredFile = {
-        key,
-        fileName,
-        filePath,
-        fileUrl: `/${key}`,
-        mimeType,
-        size: stats.size,
-        createdAt: stats.birthtime.toISOString()
+
+      return {
+        LastModified: fileInfo.updated_at ? new Date(fileInfo.updated_at) : new Date(),
+        ContentLength: fileInfo.metadata?.size || 0,
+        ContentType: fileInfo.metadata?.mimetype || 'application/octet-stream',
+        ETag: fileInfo.id || key
       };
-      
-      return storedFile;
     } catch (error) {
-      console.error('Error getting file:', error);
+      console.error('Error getting file metadata:', error);
       return null;
     }
   }
-  
-  /**
-   * Get the contents of a file as a buffer
-   */
-  getFileBuffer(key: string): Buffer | null {
-    try {
-      const filePath = path.join(process.cwd(), key);
-      
-      if (!fs.existsSync(filePath)) {
-        return null;
-      }
-      
-      return fs.readFileSync(filePath);
-    } catch (error) {
-      console.error('Error getting file buffer:', error);
-      return null;
-    }
-  }
-  
-  /**
-   * Serve a file from storage
-   */
-  serveFile(key: string): { buffer: Buffer; file: StoredFile } | null {
-    try {
-      const file = this.getFile(key);
-      if (!file) {
-        return null;
-      }
-      
-      const buffer = this.getFileBuffer(key);
-      if (!buffer) {
-        return null;
-      }
-      
-      return { buffer, file };
-    } catch (error) {
-      console.error('Error serving file:', error);
-      return null;
-    }
-  }
-  
-  /**
-   * Infer MIME type from file key (extension)
-   */
-  private getMimeTypeFromKey(key: string): string {
-    const extension = path.extname(key).toLowerCase();
-    
-    const mimeTypes: Record<string, string> = {
-      '.txt': 'text/plain',
-      '.pdf': 'application/pdf',
-      '.doc': 'application/msword',
-      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      '.mp3': 'audio/mpeg',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.png': 'image/png'
-    };
-    
-    return mimeTypes[extension] || 'application/octet-stream';
+
+  getPublicUrl(key: string): string {
+    const { data } = supabaseAdmin.storage
+      .from(this.bucketName)
+      .getPublicUrl(key);
+    return data.publicUrl;
   }
 }
 

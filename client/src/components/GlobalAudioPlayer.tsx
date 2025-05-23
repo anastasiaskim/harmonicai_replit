@@ -214,7 +214,7 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
       setErrorMessage("Failed to create audio player. Please check console for details.");
       return undefined;
     }
-  }, [currentChapter, currentChapterIndex, chapters.length, volume]);
+  }, [currentChapter, currentChapterIndex, chapters.length, volume, onDurationUpdate]);
 
   // Toggle play/pause
   const togglePlayback = () => {

@@ -22,9 +22,10 @@ function ensureDirectoryExists(dirPath: string) {
 const uploadDir = path.resolve(process.cwd(), 'uploads');
 ensureDirectoryExists(uploadDir);
 
-// Ensure audio directory exists
+// Physical directory for audio files
 const audioDir = path.resolve(process.cwd(), audioConfig.outputDirectory);
-ensureDirectoryExists(audioDir);
+// Derive public URL prefix from the same config (fallback to '/audio')
+const publicAudioPrefix = audioConfig.publicPath ?? `/${audioConfig.outputDirectory}`;
 
 export interface ElevenLabsConfig {
   apiKey: string;
@@ -182,7 +183,7 @@ class AudioService {
         const stats = fs.statSync(filePath);
         if (stats.size > 0) {
           console.log(`Audio file ${fileName} already exists with size ${stats.size} bytes, returning cached version`);
-          return `/audio/${fileName}`;
+          return `${publicAudioPrefix}/${fileName}`;
         } else {
           console.log(`Audio file ${fileName} exists but is empty (size: ${stats.size} bytes), regenerating`);
         }
@@ -192,13 +193,14 @@ class AudioService {
         const result = await elevenLabsService.generateAudio(textChunks[0], voiceId, fileName);
         if (result.success) {
           await this.updateVoiceAnalytics(voiceId);
-          return `/audio/${fileName}`;
+          return `${publicAudioPrefix}/${fileName}`;
         } else {
           throw new Error(result.error || 'Failed to generate audio');
         }
       } catch (error: any) {
-        fs.writeFileSync(filePath, Buffer.from(''));
-        return `/audio/${fileName}`;
+        // Log the error but re-throw it to trigger retry logic
+        console.error('Error generating audio:', error);
+        throw error;
       }
     } else {
       // Multiple chunks: generate audio for each chunk and concatenate
@@ -213,25 +215,45 @@ class AudioService {
               throw new Error(result.error || `Failed to generate audio for chunk ${i+1}`);
             }
           } catch (error: any) {
-            fs.writeFileSync(chunkFilePath, Buffer.from(''));
+            throw new Error('Audio generation failed; error details: ' + error.message);
           }
         }
         chunkFileNames.push(chunkFileName);
       }
       // Concatenate all chunk files into one final file
       ensureDirectoryExists(audioDir);
-      const writeStream = fs.createWriteStream(filePath);
+      
+      // Create the final file with the first chunk
+      const firstChunkPath = path.join(audioDir, chunkFileNames[0]);
+      if (fs.existsSync(firstChunkPath)) {
+        await fs.promises.copyFile(firstChunkPath, filePath);
+      } else {
+        throw new Error(`First chunk file ${chunkFileNames[0]} not found`);
+      }
+
+      // Sequentially append remaining chunks
+      for (let i = 1; i < chunkFileNames.length; i++) {
+        const chunkFilePath = path.join(audioDir, chunkFileNames[i]);
+        if (fs.existsSync(chunkFilePath)) {
+          const chunkData = await fs.promises.readFile(chunkFilePath);
+          await fs.promises.appendFile(filePath, chunkData);
+        } else {
+          console.warn(`Chunk file ${chunkFileNames[i]} not found, skipping`);
+        }
+      }
+      
+      // Clean up chunk files after successful concatenation
       for (const chunkFileName of chunkFileNames) {
         const chunkFilePath = path.join(audioDir, chunkFileName);
         if (fs.existsSync(chunkFilePath)) {
-          const data = fs.readFileSync(chunkFilePath);
-          writeStream.write(data);
+          await fs.promises.unlink(chunkFilePath).catch(err => 
+            console.warn(`Failed to delete chunk file ${chunkFileName}:`, err)
+          );
         }
       }
-      writeStream.end();
-      await new Promise(resolve => writeStream.on('finish', resolve));
+      
       await this.updateVoiceAnalytics(voiceId);
-      return `/audio/${fileName}`;
+      return `${publicAudioPrefix}/${fileName}`;
     }
   }
 
@@ -248,7 +270,10 @@ class AudioService {
         return await this.convertTextToSpeech(request);
       } catch (error) {
         if (i === attempts - 1) throw error;
-        const delay = Math.min(audioConfig.retryDelay * Math.pow(2, i), audioConfig.maxRetryDelay);
+        const baseDelay = Math.min(audioConfig.retryDelay * Math.pow(2, i), audioConfig.maxRetryDelay);
+        // Add ±20% jitter to prevent retry storms
+        const jitterFactor = 0.8 + Math.random() * 0.4; // Random number between 0.8 and 1.2
+        const delay = Math.floor(baseDelay * jitterFactor);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -260,8 +285,7 @@ class AudioService {
    */
   async generateAudio(
     chapter: ChapterDTO, 
-    voiceId: string,
-    enableRealApiCall: boolean = true
+    voiceId: string
   ): Promise<InsertChapter> {
     try {
       console.log(`Generating audio for chapter "${chapter.title}" using voice "${voiceId}"`);
@@ -329,7 +353,7 @@ class AudioService {
   /**
    * Update voice usage analytics
    */
-  async updateVoiceAnalytics(voiceId: string): Promise<void> {
+  private async updateVoiceAnalytics(voiceId: string): Promise<void> {
     const analytics = await storage.getAnalytics();
     if (analytics) {
       // Create a safe copy of voice usage

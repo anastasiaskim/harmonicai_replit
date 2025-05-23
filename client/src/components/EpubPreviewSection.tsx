@@ -5,6 +5,32 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { BookOpen, List, FileText, ChevronRight } from 'lucide-react';
 import { EpubParseResult, EpubChapter, loadChapterContent } from '@/lib/epubParserJszip';
+import DOMPurify from 'dompurify';
+
+// Configure DOMPurify with specific options for EPUB content
+const purifyConfig = {
+  ALLOWED_TAGS: [
+    'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'br', 'b', 'i', 'em', 'strong', 'a', 'span',
+    'div', 'blockquote', 'ul', 'ol', 'li', 'img'
+  ],
+  ALLOWED_ATTR: [
+    'href', 'src', 'alt', 'title', 'class', 'id',
+    'style', 'target', 'rel'
+  ],
+  ALLOWED_STYLES: [
+    'color', 'background-color', 'font-size', 'font-family',
+    'text-align', 'margin', 'padding', 'line-height'
+  ],
+  FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed'],
+  FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+  SANITIZE_DOM: true,
+  SANITIZE_NAMED_PROPS: true,
+  RETURN_DOM: false,
+  RETURN_DOM_FRAGMENT: false,
+  RETURN_DOM_IMPORT: false,
+  RETURN_TRUSTED_TYPE: true
+};
 
 interface EpubPreviewSectionProps {
   epubData: EpubParseResult;
@@ -21,6 +47,11 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
   const [selectedChapter, setSelectedChapter] = useState<EpubChapter | null>(null);
   const [chapterContentCache, setChapterContentCache] = useState<Record<string, {text: string, htmlContent: string}>>({});
   const [isLoadingChapter, setIsLoadingChapter] = useState(false);
+  
+  // Helper function to generate a unique cache key for a chapter
+  const getChapterCacheKey = (chapter: EpubChapter, index: number): string => {
+    return chapter.id ? `id-${chapter.id}` : `index-${index}`;
+  };
   
   // Format all chapters into a markdown string for processing
   const processAllContent = () => {
@@ -42,21 +73,39 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
   };
   
   // Handle chapter selection with lazy loading
-  const handleChapterClick = async (chapter: EpubChapter) => {
+  const handleChapterClick = async (chapter: EpubChapter, index: number) => {
     setSelectedChapter(chapter);
     setActiveTab('content');
+    
+    const cacheKey = getChapterCacheKey(chapter, index);
+    
     // If already cached, do nothing
-    if (chapterContentCache[chapter.id]) return;
+    if (chapterContentCache[cacheKey]) return;
+    
     // If no zipInstance or opfDirWithSlash, cannot load
     if (!epubData.zipInstance || !epubData.opfDirWithSlash) return;
+    
     setIsLoadingChapter(true);
     try {
       const content = await loadChapterContent(epubData.zipInstance, epubData.opfDirWithSlash, chapter);
-      setChapterContentCache(prev => ({ ...prev, [chapter.id]: content }));
+      setChapterContentCache(prev => ({ ...prev, [cacheKey]: content }));
     } catch (e) {
-      setChapterContentCache(prev => ({ ...prev, [chapter.id]: { text: 'Failed to load chapter content.', htmlContent: '' } }));
+      setChapterContentCache(prev => ({ 
+        ...prev, 
+        [cacheKey]: { text: 'Failed to load chapter content.', htmlContent: '' } 
+      }));
     } finally {
       setIsLoadingChapter(false);
+    }
+  };
+  
+  // Sanitize HTML content
+  const sanitizeHtml = (html: string): string => {
+    try {
+      return DOMPurify.sanitize(html, purifyConfig);
+    } catch (error) {
+      console.error('Error sanitizing HTML:', error);
+      return '<p>Error: Content could not be safely rendered.</p>';
     }
   };
   
@@ -179,7 +228,7 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                 
                 {epubData.chapters.map((chapter, index) => (
                   <div 
-                    key={chapter.id || index}
+                    key={getChapterCacheKey(chapter, index)}
                     className={`
                       p-2 rounded-md cursor-pointer transition-colors
                       ${selectedChapter?.id === chapter.id 
@@ -190,7 +239,7 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                     style={{ 
                       marginLeft: `${chapter.level * 0.5}rem` 
                     }}
-                    onClick={() => handleChapterClick(chapter)}
+                    onClick={() => handleChapterClick(chapter, index)}
                   >
                     <div className="flex items-center">
                       <ChevronRight className="h-4 w-4 mr-1 flex-shrink-0" />
@@ -255,10 +304,12 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                   </div>
                   <ScrollArea className="h-60 rounded-md border p-4">
                     <div className="prose prose-sm max-w-none">
-                      {chapterContentCache[selectedChapter.id]?.htmlContent ? (
-                        <div dangerouslySetInnerHTML={{ __html: chapterContentCache[selectedChapter.id].htmlContent }} />
+                      {chapterContentCache[getChapterCacheKey(selectedChapter, epubData.chapters.findIndex(ch => ch === selectedChapter))]?.htmlContent ? (
+                        <div dangerouslySetInnerHTML={{ 
+                          __html: sanitizeHtml(chapterContentCache[getChapterCacheKey(selectedChapter, epubData.chapters.findIndex(ch => ch === selectedChapter))].htmlContent)
+                        }} />
                       ) : (
-                        <p>{chapterContentCache[selectedChapter.id]?.text || 'No content available.'}</p>
+                        <p>{chapterContentCache[getChapterCacheKey(selectedChapter, epubData.chapters.findIndex(ch => ch === selectedChapter))]?.text || 'No content available.'}</p>
                       )}
                     </div>
                   </ScrollArea>
@@ -271,13 +322,15 @@ const EpubPreviewSection: React.FC<EpubPreviewSectionProps> = ({
                     >
                       Back to Contents
                     </Button>
-                    {chapterContentCache[selectedChapter.id]?.text && (
+                    {chapterContentCache[getChapterCacheKey(selectedChapter, epubData.chapters.findIndex(ch => ch === selectedChapter))]?.text && (
                       <Button 
                         variant="default" 
                         size="sm"
                         className="text-xs"
                         onClick={() => {
-                          const chapterContent = `## ${selectedChapter.title}\n\n${chapterContentCache[selectedChapter.id]?.text || ''}`;
+                          const chapterContent = `## ${selectedChapter.title}\n\n${
+                            chapterContentCache[getChapterCacheKey(selectedChapter, epubData.chapters.findIndex(ch => ch === selectedChapter))]?.text || ''
+                          }`;
                           onSelectChapter(chapterContent, selectedChapter.title);
                         }}
                       >

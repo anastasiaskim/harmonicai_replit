@@ -4,6 +4,7 @@
  */
 import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
+import type { CheerioAPI } from 'cheerio';
 
 export interface EpubChapter {
   id: string;
@@ -14,6 +15,7 @@ export interface EpubChapter {
   htmlContent?: string; // Original HTML content
   index: number;
   source: 'ncx' | 'heading' | 'spine'; // Indicates where this chapter was extracted from
+  loadError?: string;  // Error message if chapter failed to load
 }
 
 export interface EpubParseResult {
@@ -42,6 +44,10 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
     const { $opf, title, author } = extractMetadata(opfData);
     const chapters = extractChapters($opf);
     const coverUrl = await extractCoverImage(zip, $opf, opfDirWithSlash);
+    
+    // Track chapter loading errors
+    const chapterErrors: string[] = [];
+    
     // Eagerly load and aggregate all chapter text
     let content = '';
     for (const chapter of chapters) {
@@ -50,9 +56,29 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
         chapter.text = text;
         content += `# ${chapter.title}\n\n${text}\n\n`;
       } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : 'Unknown error loading chapter';
         chapter.text = '';
+        chapter.loadError = errorMessage;
+        chapterErrors.push(`Chapter "${chapter.title}": ${errorMessage}`);
       }
     }
+
+    // If any chapters failed to load, include the errors in the result
+    if (chapterErrors.length > 0) {
+      return {
+        title,
+        author,
+        chapters,
+        metadata: { title, author, opfPath },
+        coverUrl,
+        content,
+        success: true,
+        zipInstance: zip,
+        opfDirWithSlash,
+        error: `Some chapters failed to load:\n${chapterErrors.join('\n')}`
+      };
+    }
+
     return {
       title,
       author,
@@ -192,7 +218,7 @@ function extractMetadata(opfData: string) {
 }
 
 // Helper: Extract chapters/TOC
-function extractChapters($opf: cheerio.CheerioAPI): EpubChapter[] {
+function extractChapters($opf: CheerioAPI): EpubChapter[] {
   // Find the NCX file
   const ncxId = $opf('spine').attr('toc');
   let ncxPath: string | undefined;
@@ -255,7 +281,7 @@ function extractChapters($opf: cheerio.CheerioAPI): EpubChapter[] {
 }
 
 // Helper: Extract cover image
-async function extractCoverImage(zip: JSZip, $opf: cheerio.CheerioAPI, opfDirWithSlash: string): Promise<string | undefined> {
+async function extractCoverImage(zip: JSZip, $opf: CheerioAPI, opfDirWithSlash: string): Promise<string | undefined> {
   // ... existing logic for extracting cover image ...
   return undefined;
 }

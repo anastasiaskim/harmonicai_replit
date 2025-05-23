@@ -6,6 +6,9 @@ import * as path from 'path';
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import JSZip from "jszip";
+import { createClient } from '@supabase/supabase-js';
+import { userService } from './infrastructure/userService';
+import { SUBSCRIPTION_TIERS } from '@shared/schema';
 
 // Import domain layer
 import { textToSpeechSchema } from "../shared/schema";
@@ -23,6 +26,43 @@ import { fileService } from "./infrastructure/fileService";
 import { chapterService } from "./infrastructure/chapterService";
 import { audioService } from "./infrastructure/audioService";
 import { storageService } from "./infrastructure/storageService";
+import { queueService } from "./infrastructure/queueService";
+import { metricsService } from "./infrastructure/metricsService";
+
+// Validate required environment variables
+const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+if (missingEnvVars.length > 0) {
+  throw new Error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
+}
+
+// Initialize Supabase admin client
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  }
+);
+
+// Extend Express Request type to include user
+declare global {
+  namespace Express {
+    interface User {
+      id: string;
+      email: string;
+      subscriptionTier?: keyof typeof SUBSCRIPTION_TIERS;
+      characterLimit?: number;
+      charactersUsed?: number;
+    }
+    interface Request {
+      user?: User;
+    }
+  }
+}
 
 // Configure multer for file uploads
 const upload = multer({
@@ -36,6 +76,69 @@ const upload = multer({
 const uploadDir = path.resolve(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Authentication middleware
+async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).json({ error: 'No authorization header' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !user) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    // Get or create user record
+    let userRecord = await userService.getUser(user.id);
+    if (!userRecord) {
+      userRecord = await userService.createUser({
+        id: user.id,
+        email: user.email!,
+      });
+    }
+
+    // Attach user to request
+    req.user = userRecord;
+    next();
+  } catch (error) {
+    console.error('Auth error:', error);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+}
+
+// Usage limit middleware
+async function checkUsageLimit(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    // Calculate required characters based on request
+    let requiredCharacters = 0;
+    if (req.body.text) {
+      requiredCharacters = req.body.text.length;
+    } else if (req.body.chapters) {
+      requiredCharacters = req.body.chapters.reduce((sum: number, chapter: any) => sum + chapter.text.length, 0);
+    }
+
+    const { allowed, message } = await userService.checkUsageLimit(req.user.id, requiredCharacters);
+    if (!allowed) {
+      return res.status(403).json({ error: message });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Usage check error:', error);
+    res.status(500).json({ error: 'Failed to check usage limits' });
+  }
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -116,7 +219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Convert text to speech using ElevenLabs API
-  app.post("/api/text-to-speech", async (req: Request, res: Response) => {
+  app.post("/api/text-to-speech", requireAuth, checkUsageLimit, async (req: Request, res: Response) => {
     try {
       console.log("Received text-to-speech request with body length:", JSON.stringify(req.body).length);
       
@@ -129,16 +232,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       console.log("Request validated successfully");
-      console.log("Processing", parsedBody.data.chapters.length, "chapters");
+      console.log("Processing", parsedBody.data.chapters?.length || 1, "chapters");
 
-      // Execute the use case
-      const result = await generateAudiobookUseCase(parsedBody.data);
+      // Add job to queue
+      const { jobId } = await queueService.addTTSJob(parsedBody.data, req.user!.id);
       
-      console.log("Generated audiobook successfully with", result.length, "chapters");
+      // Log usage
+      const characterCount = parsedBody.data.chapters?.reduce((sum, chapter) => sum + chapter.text.length, 0) || parsedBody.data.text.length;
+      await userService.logUsage(req.user!.id, 'text_to_speech', characterCount);
       
       res.json({
         success: true,
-        chapters: result
+        jobId,
+        message: 'TTS job queued successfully'
       });
     } catch (error) {
       console.error("Text-to-speech conversion error:", error);
@@ -149,7 +255,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Error details:", error.stack);
         return res.status(500).json({ error: error.message });
       }
-      return res.status(500).json({ error: "Failed to generate audio" });
+      return res.status(500).json({ error: "Failed to queue TTS job" });
     }
   });
   
@@ -158,18 +264,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Serve audio files (legacy endpoint)
   app.get("/api/audio/:filename", (req: Request, res: Response) => {
     const filename = req.params.filename;
-    
     try {
       const { filePath, exists } = audioService.getAudioFilePath(filename);
-      
       if (!exists) {
         return res.status(404).json({ error: "Audio file not found" });
       }
-      
+      const stats = fs.statSync(filePath);
+      if (stats.size === 0) {
+        return res.status(422).json({ error: "Audio file is missing or corrupted." });
+      }
       // Set headers for audio streaming
       res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
-      
       // Stream the file to the client
       const fileStream = fs.createReadStream(filePath);
       fileStream.pipe(res);
@@ -180,37 +286,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Serve files from storage (uploads or audio)
-  app.get("/uploads/:filename", (req: Request, res: Response) => {
-    const key = `uploads/${req.params.filename}`;
-    serveStoredFile(key, res);
-  });
-  
   app.get("/audio/:filename", (req: Request, res: Response) => {
     const key = `audio/${req.params.filename}`;
-    serveStoredFile(key, res);
-  });
-  
-  // Helper function to serve files from storage
-  function serveStoredFile(key: string, res: Response) {
     try {
       const fileData = storageService.serveFile(key);
-      
-      if (!fileData) {
-        return res.status(404).json({ error: "File not found" });
+      if (!fileData || fileData.file.size === 0) {
+        return res.status(422).json({ error: "Audio file is missing or corrupted." });
       }
-      
       // Set appropriate headers
       res.setHeader('Content-Type', fileData.file.mimeType);
       res.setHeader('Content-Disposition', `attachment; filename=${fileData.file.fileName}`);
-      
       // Send the file
       res.send(fileData.buffer);
     } catch (error) {
       console.error("Error serving file:", error);
       return res.status(500).json({ error: "Failed to serve file" });
     }
-  }
-
+  });
+  
   // Server-side chapter ZIP creation and download
   app.post("/api/download", async (req: Request, res: Response) => {
     try {
@@ -379,6 +472,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error checking secret:", error);
       res.status(500).json({ error: "Failed to check secret" });
+    }
+  });
+
+  // Poll TTS job status
+  app.get('/api/tts/status/:jobId', async (req: Request, res: Response) => {
+    try {
+      const { jobId } = req.params;
+      const status = await queueService.getJobStatus(jobId);
+      if (!status) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      res.json(status);
+    } catch (error) {
+      console.error('Error fetching TTS job status:', error);
+      res.status(500).json({ error: 'Failed to fetch job status' });
+    }
+  });
+
+  // Cancel TTS job
+  app.post('/api/tts/cancel/:jobId', async (req: Request, res: Response) => {
+    try {
+      const { jobId } = req.params;
+      const success = await queueService.cancelJob(jobId);
+      if (!success) {
+        return res.status(404).json({ error: 'Job not found or already completed' });
+      }
+      res.json({ success: true, message: 'Job cancelled successfully' });
+    } catch (error) {
+      console.error('Error cancelling TTS job:', error);
+      res.status(500).json({ error: 'Failed to cancel job' });
+    }
+  });
+
+  // Get queue and worker metrics
+  app.get('/api/metrics', async (_req: Request, res: Response) => {
+    try {
+      const metrics = await metricsService.getLatestMetrics();
+      if (!metrics) {
+        return res.status(404).json({ error: 'No metrics available' });
+      }
+      res.json(metrics);
+    } catch (error) {
+      console.error('Error fetching metrics:', error);
+      res.status(500).json({ error: 'Failed to fetch metrics' });
+    }
+  });
+
+  // Start metrics collection
+  app.post('/api/metrics/start', async (_req: Request, res: Response) => {
+    try {
+      await metricsService.startMetricsCollection();
+      res.json({ success: true, message: 'Metrics collection started' });
+    } catch (error) {
+      console.error('Error starting metrics collection:', error);
+      res.status(500).json({ error: 'Failed to start metrics collection' });
+    }
+  });
+
+  // Stop metrics collection
+  app.post('/api/metrics/stop', async (_req: Request, res: Response) => {
+    try {
+      await metricsService.stopMetricsCollection();
+      res.json({ success: true, message: 'Metrics collection stopped' });
+    } catch (error) {
+      console.error('Error stopping metrics collection:', error);
+      res.status(500).json({ error: 'Failed to stop metrics collection' });
     }
   });
 

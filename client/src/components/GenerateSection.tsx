@@ -26,9 +26,9 @@ const GenerateSection: React.FC<GenerateSectionProps> = ({
 }) => {
   // Provide a default value for progress if undefined
   const safeProgress = progress || { current: 0, total: 0, status: 'idle' };
-  // Calculate progress percentage
+  // Calculate progress percentage, clamped between 0 and 100
   const progressPercentage = safeProgress.total > 0 
-    ? Math.round((safeProgress.current / safeProgress.total) * 100) 
+    ? Math.min(100, Math.round((safeProgress.current / safeProgress.total) * 100))
     : 0;
 
   // Get status message based on progress status

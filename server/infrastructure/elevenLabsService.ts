@@ -9,11 +9,13 @@ import { v4 as uuid } from 'uuid';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { RateLimiter } from 'limiter';
+import { audioConfig } from '../../config/audio.config';
 
 // Get audio directory (create if needed)
-const audioDir = path.join(process.cwd(), 'audio');
+const audioDir = path.join(process.cwd(), audioConfig.outputDirectory);
 if (!fs.existsSync(audioDir)) {
   fs.mkdirSync(audioDir, { recursive: true });
+  console.log(`Created directory: ${audioDir}`);
 }
 
 // Configuration for ElevenLabs
@@ -122,19 +124,25 @@ class ElevenLabsService {
   }
   
   /**
-   * Wait for rate limit token with timeout
+   * Wait for rate limit token with timeout (non-blocking)
    */
   private async waitForRateLimitToken(timeoutMs: number = 5000): Promise<boolean> {
-    try {
-      await this.rateLimiter.removeTokens(1);
-      return true;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('RateLimiter timeout')) {
-        console.warn('Rate limit token acquisition timed out');
-        return false;
+    const pollInterval = 100; // ms
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      // Prefer tryRemoveTokens if available
+      if (typeof (this.rateLimiter as any).tryRemoveTokens === 'function') {
+        if ((this.rateLimiter as any).tryRemoveTokens(1)) {
+          return true;
+        }
+      } else if (typeof this.rateLimiter.getTokensRemaining === 'function' && this.rateLimiter.getTokensRemaining() > 0) {
+        await this.rateLimiter.removeTokens(1);
+        return true;
       }
-      throw error;
+      await new Promise(res => setTimeout(res, pollInterval));
     }
+    console.warn('Rate limit token acquisition timed out');
+    return false;
   }
   
   /**
@@ -353,7 +361,7 @@ class ElevenLabsService {
               outputStream.write(chunkData);
             }
             
-            // Close the output stream
+            // Close the output stream and wait for it to finish
             outputStream.end();
             
             // Clean up temporary files
@@ -371,77 +379,76 @@ class ElevenLabsService {
             } catch (e) {
               console.warn('Could not delete temporary directory:', e);
             }
+
+            return new Promise((resolve) => {
+              outputStream.on('finish', () => {
+                if (fs.existsSync(filePath)) {
+                  const stats = fs.statSync(filePath);
+                  if (stats.size > 0) {
+                    console.log(`Audio file successfully saved using alternative method at ${filePath} (${stats.size} bytes)`);
+                    resolve({ success: true, filePath });
+                  } else {
+                    console.error('File was created but is empty (alternative method)');
+                    resolve({
+                      success: false,
+                      filePath,
+                      error: 'Audio file is empty, possibly due to API quota limitations'
+                    });
+                  }
+                } else {
+                  resolve({
+                    success: false,
+                    filePath,
+                    error: 'Failed to create audio file with alternative method'
+                  });
+                }
+              });
+              
+              outputStream.on('error', (err) => {
+                console.error('Output stream error:', err);
+                resolve({
+                  success: false,
+                  filePath,
+                  error: `Output stream error: ${err.message}`
+                });
+              });
+            });
           } catch (combineError) {
             console.error('Error combining audio chunks:', combineError);
             throw new Error(`Failed to combine audio chunks: ${combineError}`);
           }
-          
-          return new Promise((resolve) => {
-            fileStream.on('finish', () => {
-              if (fs.existsSync(filePath)) {
-                const stats = fs.statSync(filePath);
-                if (stats.size > 0) {
-                  console.log(`Audio file successfully saved using alternative method at ${filePath} (${stats.size} bytes)`);
-                  resolve({ success: true, filePath });
-                } else {
-                  console.error('File was created but is empty (alternative method)');
-                  resolve({
-                    success: false,
-                    filePath,
-                    error: 'Audio file is empty, possibly due to API quota limitations'
-                  });
-                }
-              } else {
-                resolve({
-                  success: false,
-                  filePath,
-                  error: 'Failed to create audio file with alternative method'
-                });
-              }
-            });
-            
-            fileStream.on('error', (err) => {
-              console.error('File stream error:', err);
-              resolve({
-                success: false,
-                filePath,
-                error: `File stream error: ${err.message}`
-              });
-            });
-          });
         } catch (fallbackError) {
           console.error('Alternative method also failed:', fallbackError);
           
-          // Create an empty placeholder file
-          this.createEmptyFile(filePath);
+          // Try to extract detailed error information
+          let errorMessage = 'Unknown error';
+          if (fallbackError instanceof Error) {
+            errorMessage = fallbackError.message;
+          } else if (typeof fallbackError === 'string') {
+            errorMessage = fallbackError;
+          }
           
           return {
             success: false,
             filePath,
-            error: `ElevenLabs API error: ${detailedError}. Fallback also failed.`
+            error: `ElevenLabs API error: ${errorMessage}. Fallback also failed.`
           };
         }
       }
     } catch (error: any) {
       console.error('Error generating audio with ElevenLabs:', error);
       
-      // Create an empty placeholder file
-      this.createEmptyFile(filePath);
-      
       // Try to extract detailed error information
       let errorMessage = 'Unknown error';
-      if (error.statusCode) {
-        errorMessage = `Status code: ${error.statusCode}`;
-        if (error.message) {
-          errorMessage += ` - ${error.message}`;
-        }
-      } else if (error.message) {
+      if (error instanceof Error) {
         errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
       }
       
-      if (error.statusCode === 401) {
+      if (error instanceof Error && error.name === 'UnauthorizedError') {
         errorMessage = "API key is invalid or has expired (401 Unauthorized)";
-      } else if (error.statusCode === 429) {
+      } else if (error instanceof Error && error.name === 'TooManyRequestsError') {
         errorMessage = "API quota exceeded or rate limit reached (429 Too Many Requests)";
       }
       
@@ -572,25 +579,48 @@ class ElevenLabsService {
   }
 
   async generateAudioWithCache(text: string, voiceId: string): Promise<string> {
-    const cacheKey = `${voiceId}-${createHash(text)}`;
+    // Create a hash of the text using SHA-256
+    const hash = createHash('sha256')
+      .update(text)
+      .digest('hex');
+    
+    const cacheKey = `${voiceId}-${hash}`;
     if (this.audioCache.has(cacheKey)) {
       return this.audioCache.get(cacheKey)!;
     }
+
     const result = await this.generateAudio(text, voiceId, this.generateUniqueFilename(text, voiceId));
-    this.audioCache.set(cacheKey, result.filePath);
-    return result.filePath;
+    
+    // Only cache successful results
+    if (result.success) {
+      this.audioCache.set(cacheKey, result.filePath);
+      return result.filePath;
+    } else {
+      // If generation failed, throw the error to be handled by the caller
+      throw new Error(result.error || 'Failed to generate audio');
+    }
   }
 
   private async handleStreamResponse(streamResponse: Response, chunkFilePath: string): Promise<void> {
     if (streamResponse.body) {
-      // Convert the response to a buffer and write to chunk file
-      const buffer = new Uint8Array(await streamResponse.arrayBuffer());
-      fs.writeFileSync(chunkFilePath, buffer);
+      // Stream the response body directly to the file
+      const writable = fs.createWriteStream(chunkFilePath);
+      const readable = streamResponse.body as unknown as NodeJS.ReadableStream;
+      // Optional: progress reporting
+      let bytesWritten = 0;
+      readable.on('data', (chunk) => {
+        bytesWritten += chunk.length;
+        if (bytesWritten % (1024 * 100) < chunk.length) { // Every ~100KB
+          console.log(`Streaming audio chunk: ${bytesWritten} bytes written to ${chunkFilePath}`);
+        }
+      });
+      await new Promise<void>((resolve, reject) => {
+        readable.pipe(writable);
+        writable.on('finish', resolve);
+        writable.on('error', reject);
+        readable.on('error', reject);
+      });
     }
-  }
-
-  private createEmptyFile(filePath: string): void {
-    fs.writeFileSync(filePath, new Uint8Array(0));
   }
 
   /**

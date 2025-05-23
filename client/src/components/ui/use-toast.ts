@@ -71,6 +71,21 @@ const addToRemoveQueue = (toastId: string) => {
   toastTimeouts.set(toastId, timeout)
 }
 
+/**
+ * Helper function to handle toast dismissal with side effects
+ */
+const dismissToast = (toastId?: string) => {
+  if (toastId) {
+    addToRemoveQueue(toastId)
+  } else {
+    memoryState.toasts.forEach((toast) => {
+      addToRemoveQueue(toast.id)
+    })
+  }
+  
+  dispatch({ type: "DISMISS_TOAST", toastId })
+}
+
 export const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case "ADD_TOAST":
@@ -87,23 +102,11 @@ export const reducer = (state: State, action: Action): State => {
         ),
       }
 
-    case "DISMISS_TOAST": {
-      const { toastId } = action
-
-      // ! Side effects ! - This could be extracted into a dismissToast() action,
-      // but I'll keep it here for simplicity
-      if (toastId) {
-        addToRemoveQueue(toastId)
-      } else {
-        state.toasts.forEach((toast) => {
-          addToRemoveQueue(toast.id)
-        })
-      }
-
+    case "DISMISS_TOAST":
       return {
         ...state,
         toasts: state.toasts.map((t) =>
-          t.id === toastId || toastId === undefined
+          t.id === action.toastId || action.toastId === undefined
             ? {
                 ...t,
                 open: false,
@@ -111,7 +114,7 @@ export const reducer = (state: State, action: Action): State => {
             : t
         ),
       }
-    }
+
     case "REMOVE_TOAST":
       if (action.toastId === undefined) {
         return {
@@ -126,7 +129,7 @@ export const reducer = (state: State, action: Action): State => {
   }
 }
 
-const listeners: Array<(state: State) => void> = []
+const listeners = new Set<(state: State) => void>()
 
 let memoryState: State = { toasts: [] }
 
@@ -172,19 +175,16 @@ function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 
   React.useEffect(() => {
-    listeners.push(setState)
+    listeners.add(setState)
     return () => {
-      const index = listeners.indexOf(setState)
-      if (index > -1) {
-        listeners.splice(index, 1)
-      }
+      listeners.delete(setState)
     }
-  }, [state])
+  }, [])
 
   return {
     ...state,
     toast,
-    dismiss: (toastId?: string) => dispatch({ type: "DISMISS_TOAST", toastId }),
+    dismiss: dismissToast,
   }
 }
 

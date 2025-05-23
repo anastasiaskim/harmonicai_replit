@@ -49,7 +49,7 @@ class Logger {
   constructor(config: Partial<LoggerConfig> = {}, source: string = 'app') {
     this.config = {
       level: config.level || LogLevel.INFO,
-      filePath: config.filePath || path.join(process.cwd(), 'logs'),
+      filePath: config.filePath || path.join(process.cwd(), 'logs', 'app.log'),
       maxFileSize: config.maxFileSize || 5 * 1024 * 1024, // 5MB
       maxFiles: config.maxFiles || 5,
       format: config.format || 'text',
@@ -62,8 +62,9 @@ class Logger {
 
   /**
    * Initialize the file stream for logging
+   * @param isRotation Whether this is being called during log rotation
    */
-  private initializeFileStream(): void {
+  private initializeFileStream(isRotation: boolean = false): void {
     if (!this.config.filePath) return;
 
     // Create logs directory if it doesn't exist
@@ -72,16 +73,20 @@ class Logger {
       fs.mkdirSync(logDir, { recursive: true });
     }
 
-    // Find the next available log file index
-    while (fs.existsSync(this.getLogFilePath())) {
-      this.logFileIndex++;
+    if (!isRotation) {
+      // Always start with the base log file
+      this.logFileIndex = 0;
     }
-
-    // Create write stream
-    this.fileStream = createWriteStream(this.getLogFilePath(), { flags: 'a' });
-    this.currentFileSize = fs.existsSync(this.getLogFilePath()) 
-      ? fs.statSync(this.getLogFilePath()).size 
+    const logFilePath = this.getLogFilePath();
+    this.fileStream = createWriteStream(logFilePath, { flags: 'a' });
+    this.currentFileSize = fs.existsSync(logFilePath) 
+      ? fs.statSync(logFilePath).size 
       : 0;
+
+    // If the current file is already too large, rotate it immediately
+    if (this.currentFileSize >= this.config.maxFileSize!) {
+      this.rotateLogFile();
+    }
   }
 
   /**
@@ -106,13 +111,21 @@ class Logger {
     // Close current stream
     this.fileStream.end();
 
-    // Remove old log files if we've exceeded maxFiles
+    // Find the next available log file index
     const logDir = path.dirname(this.config.filePath);
     const baseName = path.basename(this.config.filePath, path.extname(this.config.filePath));
+    
+    // Get all log files and sort them by modification time
     const logFiles = fs.readdirSync(logDir)
       .filter(file => file.startsWith(baseName))
-      .sort();
+      .map(file => ({
+        name: file,
+        mtime: fs.statSync(path.join(logDir, file)).mtime.getTime()
+      }))
+      .sort((a, b) => a.mtime - b.mtime) // Sort by modification time, oldest first
+      .map(file => file.name);
 
+    // Remove old log files if we've exceeded maxFiles
     while (logFiles.length >= this.config.maxFiles!) {
       const oldestFile = logFiles.shift();
       if (oldestFile) {
@@ -120,9 +133,19 @@ class Logger {
       }
     }
 
-    // Reset file index and create new stream
-    this.logFileIndex = 0;
-    this.initializeFileStream();
+    // Find the highest existing index
+    const existingIndices = logFiles
+      .map(file => {
+        const match = file.match(new RegExp(`${baseName}-(\\d+)`));
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter(index => !isNaN(index));
+
+    // Set the new index to be one higher than the highest existing index
+    this.logFileIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 1;
+
+    // Create new stream with the next available index, preserving the computed index
+    this.initializeFileStream(true);
   }
 
   /**
@@ -221,14 +244,34 @@ class Logger {
    * Get numeric value for log level
    */
   private getLogLevelValue(level: LogLevel): number {
-    return Object.values(LogLevel).indexOf(level);
+    const severityMap: Record<LogLevel, number> = {
+      [LogLevel.ERROR]: 0,
+      [LogLevel.WARN]: 1,
+      [LogLevel.INFO]: 2,
+      [LogLevel.DEBUG]: 3,
+      [LogLevel.TRACE]: 4
+    };
+    return severityMap[level];
   }
 
   /**
    * Log an error message
    */
-  error(message: string, context?: Record<string, any>, error?: Error): void {
-    this.log(LogLevel.ERROR, message, context, error);
+  error(message: string, error: Error): void;
+  error(message: string, context: Record<string, any>, error?: Error): void;
+  error(message: string, contextOrError?: Record<string, any> | Error, error?: Error): void {
+    let context: Record<string, any> | undefined;
+    let errorObj: Error | undefined;
+
+    // Determine if second argument is an Error or context
+    if (contextOrError instanceof Error) {
+      errorObj = contextOrError;
+    } else {
+      context = contextOrError;
+      errorObj = error;
+    }
+
+    this.log(LogLevel.ERROR, message, context, errorObj);
   }
 
   /**

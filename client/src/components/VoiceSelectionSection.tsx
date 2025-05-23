@@ -1,14 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardTitle, CardDescription } from './ui/card';
 import { RadioGroup, RadioGroupItem } from './ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Label } from './ui/label';
 import { Mic2, Play, Volume2, Filter } from 'lucide-react';
 import { Button } from './ui/button';
-import { Skeleton } from './ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import axios from 'axios';
+
+// Helper functions for normalizing values
+const normalizeAccent = (accent: string): string => {
+  if (!accent) return '';
+  // Extract the main accent from strings like "English (British)"
+  const match = accent.match(/\(([^)]+)\)/);
+  return match ? match[1].toLowerCase() : accent.toLowerCase();
+};
+
+const normalizeStyle = (style: string): string => {
+  if (!style) return '';
+  // Map full style descriptions to canonical values
+  const styleMap: Record<string, string> = {
+    'upbeat': 'expressive',
+    'relaxed': 'conversational',
+    'confident': 'authoritative',
+    'narrative & story': 'storytelling'
+  };
+  return styleMap[style.toLowerCase()] || style.toLowerCase();
+};
 
 // Hardcoded ElevenLabs voices
 const ELEVENLABS_VOICES = [
@@ -81,6 +100,17 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
 
+  // Cleanup audio resources when component unmounts or previewAudio changes
+  useEffect(() => {
+    return () => {
+      if (previewAudio) {
+        previewAudio.pause();
+        previewAudio.currentTime = 0;
+        setPreviewAudio(null);
+      }
+    };
+  }, [previewAudio]);
+
   // Add state for filters
   const [filters, setFilters] = useState({
     gender: 'all',
@@ -88,11 +118,11 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
     style: 'all'
   });
 
-  // Add filtered voices logic
+  // Add filtered voices logic with normalized comparisons
   const filteredVoices = voices.filter(voice => {
-    if (filters.gender !== 'all' && voice.gender !== filters.gender) return false;
-    if (filters.accent !== 'all' && voice.accent !== filters.accent) return false;
-    if (filters.style !== 'all' && voice.style !== filters.style) return false;
+    if (filters.gender !== 'all' && voice.gender?.toLowerCase() !== filters.gender) return false;
+    if (filters.accent !== 'all' && normalizeAccent(voice.accent || '') !== filters.accent.toLowerCase()) return false;
+    if (filters.style !== 'all' && normalizeStyle(voice.style || '') !== filters.style.toLowerCase()) return false;
     return true;
   });
 
@@ -104,9 +134,42 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
         text
       });
       return response.data.audioUrl;
-    } catch (error) {
-      console.error('Error generating preview:', error);
-      throw new Error('Failed to generate voice preview');
+    } catch (error: any) {
+      // Log detailed error information for debugging
+      if (error.response?.data) {
+        console.error('Preview generation error details:', {
+          status: error.response.status,
+          data: error.response.data,
+          message: error.response.data.message || error.message
+        });
+      } else {
+        console.error('Preview generation error:', error);
+      }
+
+      // Determine specific error message based on response
+      let errorMessage = 'Failed to generate voice preview';
+      if (error.response) {
+        switch (error.response.status) {
+          case 401:
+            errorMessage = 'API key is invalid or missing';
+            break;
+          case 403:
+            errorMessage = 'API quota exceeded or access denied';
+            break;
+          case 429:
+            errorMessage = 'Rate limit exceeded. Please try again later';
+            break;
+          case 500:
+            errorMessage = 'Server error occurred while generating preview';
+            break;
+          default:
+            errorMessage = error.response.data?.message || errorMessage;
+        }
+      } else if (error.request) {
+        errorMessage = 'No response received from server';
+      }
+
+      throw new Error(errorMessage);
     }
   };
 
@@ -169,7 +232,7 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
           Choose a voice for your audiobook narration
         </CardDescription>
 
-        {/* Add filter UI */}
+        {/* Add filter UI with normalized options */}
         <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <Label className="text-sm font-medium flex items-center">
@@ -205,8 +268,8 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Accents</SelectItem>
-                <SelectItem value="American">American</SelectItem>
-                <SelectItem value="British">British</SelectItem>
+                <SelectItem value="american">American</SelectItem>
+                <SelectItem value="british">British</SelectItem>
               </SelectContent>
             </Select>
           </div>
