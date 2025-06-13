@@ -8,14 +8,22 @@ export class CacheService {
 
   constructor() {
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    const connectTimeout = parseInt(process.env.REDIS_CONNECT_TIMEOUT || '30000', 10);
+    const commandTimeout = parseInt(process.env.REDIS_COMMAND_TIMEOUT || '30000', 10);
+
     this.redis = new Redis(redisUrl, {
       retryStrategy: (times: number) => {
-        const delay = Math.min(times * 50, 2000);
+        // Exponential backoff with max delay of 30 seconds
+        const delay = Math.min(Math.pow(2, times) * 1000, 30000);
+        console.log(`Redis retry attempt ${times}, next retry in ${delay}ms`);
         return delay;
       },
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: 5,
       enableReadyCheck: true,
-      connectTimeout: 10000,
+      connectTimeout: connectTimeout, // Read from environment variable
+      commandTimeout: commandTimeout, // Read from environment variable
+      disconnectTimeout: 5000, // 5 seconds
+      lazyConnect: true, // Don't connect immediately
     });
 
     // Set up event listeners
@@ -32,6 +40,10 @@ export class CacheService {
     this.redis.on('close', () => {
       console.log('Redis client connection closed');
       this.isConnected = false;
+    });
+
+    this.redis.on('reconnecting', () => {
+      console.log('Redis client reconnecting...');
     });
 
     // Initialize connection health check

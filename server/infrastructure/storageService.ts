@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { supabaseAdmin } from './supabaseClient';
+import * as crypto from 'crypto';
 
 export interface StoredFile {
   key: string;         // Unique identifier for the file (storage key)
@@ -12,14 +13,65 @@ export interface StoredFile {
   fileUrl: string;     // URL to access the file
   mimeType: string;    // File MIME type
   size: number;        // File size in bytes
-  createdAt: string;   // ISO timestamp of when the file was created
+  created_at: string;  // ISO timestamp of when the file was created
 }
 
 export class StorageService {
   private readonly bucketName: string;
+  private readonly ALLOWED_CHARS = /^[a-zA-Z0-9\-_.]+$/;
 
   constructor() {
     this.bucketName = process.env.SUPABASE_STORAGE_BUCKET || 'audio-files';
+  }
+
+  /**
+   * Safely extracts a file name from a storage key, preventing path traversal attacks
+   * @param key The storage key to extract the file name from
+   * @returns A sanitized file name or a cryptographic hash-based filename if sanitization fails
+   */
+  private sanitizeFileName(key: string): string {
+    try {
+      // Decode URL-encoded characters to handle encoded path traversal attempts
+      let decodedKey = decodeURIComponent(key);
+      
+      // Handle double-encoded sequences by decoding again
+      if (decodedKey.includes('%')) {
+        decodedKey = decodeURIComponent(decodedKey);
+      }
+      
+      // Normalize the path to handle any path traversal attempts
+      const normalizedPath = path.normalize(decodedKey);
+      
+      // Check for path traversal attempts after normalization
+      if (normalizedPath.includes('..')) {
+        throw new Error('Path traversal attempt detected');
+      }
+      
+      // Use path.basename to safely get the last component of the path
+      const baseName = path.basename(normalizedPath);
+      
+      // Remove any remaining path traversal sequences and normalize unicode
+      const sanitized = baseName
+        .normalize('NFKC') // Normalize unicode characters
+        .replace(/\.\./g, '')
+        .replace(/%2e%2e/gi, '')
+        .replace(/[^\x20-\x7E]/g, ''); // Remove non-printable ASCII characters
+      
+      // Check if the sanitized name contains only allowed characters and is not empty
+      if (!sanitized || !this.ALLOWED_CHARS.test(sanitized)) {
+        // Generate a safe name using a cryptographic hash
+        const hash = crypto.createHash('sha256').update(key).digest('hex');
+        const ext = path.extname(baseName);
+        return `${hash}${ext}`;
+      }
+      
+      return sanitized;
+    } catch (error) {
+      // If any error occurs during sanitization, generate a safe hash-based filename
+      const hash = crypto.createHash('sha256').update(key).digest('hex');
+      const ext = path.extname(key);
+      return `${hash}${ext}`;
+    }
   }
 
   async uploadFile(filePath: string, key: string, mimeType: string): Promise<StoredFile> {
@@ -46,7 +98,7 @@ export class StorageService {
         fileUrl: urlData.publicUrl,
         mimeType,
         size: fileContent.length,
-        createdAt: new Date().toISOString()
+        created_at: new Date().toISOString()
       };
     } catch (error) {
       console.error('Error uploading file:', error);
@@ -138,6 +190,41 @@ export class StorageService {
       .from(this.bucketName)
       .getPublicUrl(key);
     return data.publicUrl;
+  }
+
+  /**
+   * Serve a file by key, returning its buffer and metadata for download endpoints
+   */
+  async serveFile(key: string): Promise<{ buffer: Buffer; file: { fileName: string; mimeType: string; size: number } } | null> {
+    try {
+      const buffer = await this.getFile(key);
+      if (!buffer) return null;
+      
+      const fileName = this.sanitizeFileName(key);
+      const mimeType = this.getMimeTypeFromFileName(fileName) || 'application/octet-stream';
+      const size = buffer.length;
+      
+      return {
+        buffer,
+        file: { fileName, mimeType, size }
+      };
+    } catch (error) {
+      console.error('Error serving file:', error);
+      return null;
+    }
+  }
+
+  private getMimeTypeFromFileName(fileName: string): string {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'ogg': 'audio/ogg',
+      'mp4': 'audio/mp4',
+      'pdf': 'application/pdf',
+      'txt': 'text/plain'
+    };
+    return mimeTypes[ext || ''] || 'application/octet-stream';
   }
 }
 

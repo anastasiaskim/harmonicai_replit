@@ -32,4 +32,9 @@ export default defineConfig({
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
   },
+  server: {
+    watch: {
+      ignored: ['**/node_modules/**', '**/.git/**', '**/.DS_Store', '**/.vite/**']
+    }
+  },
 });

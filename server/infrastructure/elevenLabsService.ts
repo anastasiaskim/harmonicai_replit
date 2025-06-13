@@ -61,11 +61,15 @@ class ElevenLabsService {
       defaultVoice: 'EXAVITQu4vr4xnSDxMaL' // Rachel as default
     };
     
-    // Default rate limit configuration (50 requests per minute)
-    const defaultRateLimit = {
-      tokensPerInterval: 50,
-      interval: 60 * 1000 // 60 seconds in milliseconds
-    };
+    // More conservative rate limit configuration (30 requests per minute)
+const defaultRateLimit = (() => {
+const tokens = parseInt(process.env.ELEVENLABS_TOKENS_PER_INTERVAL ?? '30', 10);
+  const interval = parseInt(process.env.ELEVENLABS_RATE_INTERVAL_MS ?? '60000', 10);
+  if (Number.isNaN(tokens) || Number.isNaN(interval) || tokens <= 0 || interval <= 0) {
+    throw new Error('Invalid ELEVENLABS rate-limit configuration');
+  }
+  return { tokensPerInterval: tokens, interval };
+})();
     
     this.config = {
       apiKey: process.env.ELEVENLABS_API_KEY || '',
@@ -73,7 +77,7 @@ class ElevenLabsService {
       rateLimit: defaultRateLimit
     };
     
-    // Initialize rate limiter
+    // Initialize rate limiter with more conservative settings
     this.rateLimiter = new RateLimiter({
       tokensPerInterval: this.config.rateLimit?.tokensPerInterval || defaultRateLimit.tokensPerInterval,
       interval: this.config.rateLimit?.interval || defaultRateLimit.interval
@@ -126,22 +130,31 @@ class ElevenLabsService {
   /**
    * Wait for rate limit token with timeout (non-blocking)
    */
-  private async waitForRateLimitToken(timeoutMs: number = 5000): Promise<boolean> {
+  private async waitForRateLimitToken(timeoutMs: number = 10000): Promise<boolean> {
     const pollInterval = 100; // ms
     const start = Date.now();
+    let attempts = 0;
+    
     while (Date.now() - start < timeoutMs) {
+      attempts++;
       // Prefer tryRemoveTokens if available
       if (typeof (this.rateLimiter as any).tryRemoveTokens === 'function') {
         if ((this.rateLimiter as any).tryRemoveTokens(1)) {
+          console.log(`Rate limit token acquired after ${attempts} attempts`);
           return true;
         }
       } else if (typeof this.rateLimiter.getTokensRemaining === 'function' && this.rateLimiter.getTokensRemaining() > 0) {
         await this.rateLimiter.removeTokens(1);
+        console.log(`Rate limit token acquired after ${attempts} attempts`);
         return true;
       }
-      await new Promise(res => setTimeout(res, pollInterval));
+      
+      // Add exponential backoff
+      const backoffDelay = Math.min(100 * Math.pow(1.5, attempts), 1000);
+      await new Promise(res => setTimeout(res, backoffDelay));
     }
-    console.warn('Rate limit token acquisition timed out');
+    
+    console.warn(`Rate limit token acquisition timed out after ${attempts} attempts`);
     return false;
   }
   
@@ -153,9 +166,14 @@ class ElevenLabsService {
     voiceId: string, 
     fileName: string
   ): Promise<Result> {
+    const startTime = Date.now();
+    console.log(`Starting audio generation for ${fileName}`);
+    console.log(`Text length: ${text.length} characters`);
+    
     // Wait for rate limit token with timeout
     const hasToken = await this.waitForRateLimitToken();
     if (!hasToken) {
+      console.error('Rate limit token not available for text-to-speech request');
       return {
         success: false,
         filePath: '',
@@ -164,6 +182,7 @@ class ElevenLabsService {
     }
 
     if (!this.isApiKeyConfigured()) {
+      console.error('ElevenLabs API key not configured');
       return { 
         success: false, 
         filePath: '', 
@@ -179,8 +198,7 @@ class ElevenLabsService {
     const filePath = path.join(audioDir, fileName);
     
     try {
-      console.log(`Generating audio with ElevenLabs SDK using voice ID: ${elevenLabsVoiceId}`);
-      console.log(`Text length: ${text.length} characters`);
+      console.log(`Generating audio with ElevenLabs API using voice ID: ${elevenLabsVoiceId}`);
       
       // Define voice settings
       const voiceSettings: VoiceSettings = {
@@ -191,15 +209,15 @@ class ElevenLabsService {
       };
       
       try {
-        // Instead of using the SDK, we'll use direct API calls for better control
-        console.log('Using direct API call to generate audio');
-        
         // Create request body
         const requestBody = {
           text: text,
           model_id: "eleven_multilingual_v2",
           voice_settings: voiceSettings
         };
+        
+        console.log('Making API request to ElevenLabs...');
+        const requestStartTime = Date.now();
         
         // Make direct request to ElevenLabs API
         const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}`, {
@@ -212,250 +230,63 @@ class ElevenLabsService {
           body: JSON.stringify(requestBody)
         });
         
+        const requestEndTime = Date.now();
+        console.log(`API request completed in ${(requestEndTime - requestStartTime) / 1000} seconds`);
+        
         if (!response.ok) {
-          throw new Error(`API request failed with status: ${response.status}`);
+          const errorText = await response.text();
+          // Redact or truncate errorText for standard logs
+          if (process.env.LOG_LEVEL === 'debug') {
+            console.error(`API request failed with status: ${response.status}`, errorText);
+          } else {
+            const truncated = errorText.length > 200 ? errorText.slice(0, 200) + '...[truncated]' : errorText;
+            console.error(`API request failed with status: ${response.status}`, truncated);
+          }
+          throw new Error(`API request failed with status: ${response.status} - (see logs for details)`);
         }
         
-        // Get audio buffer from response
+        console.log('Processing API response...');
         const audio = new Uint8Array(await response.arrayBuffer());
+        console.log(`Received audio data: ${audio.length} bytes`);
         
         // Write the audio buffer to a file
-        fs.writeFileSync(filePath, audio);
+        await fs.promises.writeFile(filePath, audio);
         
-        // Check if the file was created successfully and has content
-        if (fs.existsSync(filePath)) {
-          const stats = fs.statSync(filePath);
+        // Verify the file was written successfully
+        try {
+          const stats = await fs.promises.stat(filePath);
           if (stats.size > 0) {
+            const endTime = Date.now();
             console.log(`Audio file successfully saved at ${filePath} (${stats.size} bytes)`);
-            return {
-              success: true,
-              filePath,
-            };
+            console.log(`Total processing time: ${(endTime - startTime) / 1000} seconds`);
+            return { success: true, filePath };
           } else {
             console.error('File was created but is empty');
             return {
               success: false,
               filePath,
-              error: 'Audio file is empty, possibly due to API quota limitations'
+              error: 'Audio file is empty'
             };
           }
-        } else {
-          console.error('Failed to create audio file');
+        } catch (err) {
+          console.error('Failed to create audio file', err);
           return {
             success: false,
             filePath,
             error: 'Failed to create audio file'
           };
         }
-      } catch (generateError: any) {
-        console.error('Error in ElevenLabs generate method:', generateError);
-        
-        // Create a more descriptive error message
-        let detailedError = 'Unknown ElevenLabs SDK error';
-        
-        if (generateError.statusCode) {
-          detailedError = `HTTP Error ${generateError.statusCode}`;
-          
-          // Add specific error handling
-          if (generateError.statusCode === 401) {
-            detailedError = 'Invalid or expired API key (401 Unauthorized)';
-          } else if (generateError.statusCode === 429) {
-            detailedError = 'API rate limit exceeded (429 Too Many Requests)';
-          }
-        } else if (generateError.message) {
-          detailedError = generateError.message;
-        }
-        
-        console.error('Detailed error:', detailedError);
-        
-        // Try alternative method with streaming if the main method failed
-        try {
-          console.log('Trying alternative streaming TTS method...');
-          
-          // Create a file stream to write the audio data
-          const fileStream = fs.createWriteStream(filePath);
-          
-          // Use alternative API endpoint with streaming response
-          // Split text into smaller chunks if it's too large
-          const maxChunkSize = 5000; // Max characters per chunk
-          
-          // Split text intelligently at sentence boundaries to avoid token limits
-          // The splitTextIntoSentenceChunks method doesn't exist yet, so use a simple chunking approach
-          const textChunks: string[] = [];
-          let i = 0;
-          while (i < text.length) {
-            const chunk = text.slice(i, i + maxChunkSize);
-            if (chunk) textChunks.push(chunk);
-            i += maxChunkSize;
-          }
-          
-          console.log(`Split text into ${textChunks.length} chunks for streaming`);
-          
-          // Create a temp directory for chunk files
-          const tempDir = path.join(process.cwd(), 'temp_audio');
-          if (!fs.existsSync(tempDir)) {
-            fs.mkdirSync(tempDir, { recursive: true });
-          }
-          
-          // Array to store paths to temporary audio chunk files
-          const chunkFilePaths: string[] = [];
-          
-          // Process each chunk sequentially
-          for (let i = 0; i < textChunks.length; i++) {
-            const chunkToProcess = textChunks[i];
-            const chunkFileName = `chunk_${i}_${path.basename(filePath)}`;
-            const chunkFilePath = path.join(tempDir, chunkFileName);
-            
-            console.log(`Processing chunk ${i+1}/${textChunks.length} (${chunkToProcess.length} chars)`);
-            
-            // Create request body for streaming
-            const streamRequestBody = {
-              text: chunkToProcess,
-              model_id: "eleven_multilingual_v2",
-              voice_settings: voiceSettings,
-              output_format: "mp3_44100_128"
-            };
-            
-            try {
-              // Make streaming request to ElevenLabs API
-              const streamResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}/stream`, {
-                method: 'POST',
-                headers: {
-                  'Accept': 'audio/mpeg',
-                  'Content-Type': 'application/json',
-                  'xi-api-key': this.config.apiKey
-                },
-                body: JSON.stringify(streamRequestBody)
-              });
-              
-              if (!streamResponse.ok) {
-                console.error(`Chunk ${i+1} failed with status: ${streamResponse.status}`);
-                continue; // Skip to next chunk rather than failing completely
-              }
-              
-              await this.handleStreamResponse(streamResponse, chunkFilePath);
-              chunkFilePaths.push(chunkFilePath);
-              
-              console.log(`Saved chunk ${i+1} to ${chunkFilePath}`);
-            } catch (chunkError) {
-              console.error(`Error processing chunk ${i+1}:`, chunkError);
-              // Continue with next chunk rather than failing completely
-            }
-            
-            // Add a small delay between API calls to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-          
-          if (chunkFilePaths.length === 0) {
-            throw new Error('Failed to process any chunks successfully');
-          }
-          
-          // Now combine all chunks into the final output file
-          try {
-            // Create the output file stream
-            const outputStream = fs.createWriteStream(filePath);
-            
-            // Append each chunk file to the output file
-            for (const chunkPath of chunkFilePaths) {
-              const chunkData = fs.readFileSync(chunkPath);
-              outputStream.write(chunkData);
-            }
-            
-            // Close the output stream and wait for it to finish
-            outputStream.end();
-            
-            // Clean up temporary files
-            for (const chunkPath of chunkFilePaths) {
-              try {
-                fs.unlinkSync(chunkPath);
-              } catch (e) {
-                console.warn(`Could not delete temporary file ${chunkPath}:`, e);
-              }
-            }
-            
-            // Try to clean up the temp directory
-            try {
-              fs.rmdirSync(tempDir);
-            } catch (e) {
-              console.warn('Could not delete temporary directory:', e);
-            }
-
-            return new Promise((resolve) => {
-              outputStream.on('finish', () => {
-                if (fs.existsSync(filePath)) {
-                  const stats = fs.statSync(filePath);
-                  if (stats.size > 0) {
-                    console.log(`Audio file successfully saved using alternative method at ${filePath} (${stats.size} bytes)`);
-                    resolve({ success: true, filePath });
-                  } else {
-                    console.error('File was created but is empty (alternative method)');
-                    resolve({
-                      success: false,
-                      filePath,
-                      error: 'Audio file is empty, possibly due to API quota limitations'
-                    });
-                  }
-                } else {
-                  resolve({
-                    success: false,
-                    filePath,
-                    error: 'Failed to create audio file with alternative method'
-                  });
-                }
-              });
-              
-              outputStream.on('error', (err) => {
-                console.error('Output stream error:', err);
-                resolve({
-                  success: false,
-                  filePath,
-                  error: `Output stream error: ${err.message}`
-                });
-              });
-            });
-          } catch (combineError) {
-            console.error('Error combining audio chunks:', combineError);
-            throw new Error(`Failed to combine audio chunks: ${combineError}`);
-          }
-        } catch (fallbackError) {
-          console.error('Alternative method also failed:', fallbackError);
-          
-          // Try to extract detailed error information
-          let errorMessage = 'Unknown error';
-          if (fallbackError instanceof Error) {
-            errorMessage = fallbackError.message;
-          } else if (typeof fallbackError === 'string') {
-            errorMessage = fallbackError;
-          }
-          
-          return {
-            success: false,
-            filePath,
-            error: `ElevenLabs API error: ${errorMessage}. Fallback also failed.`
-          };
-        }
+      } catch (error) {
+        console.error('Error in primary audio generation method:', error);
+        throw error;
       }
-    } catch (error: any) {
-      console.error('Error generating audio with ElevenLabs:', error);
-      
-      // Try to extract detailed error information
-      let errorMessage = 'Unknown error';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === 'string') {
-        errorMessage = error;
-      }
-      
-      if (error instanceof Error && error.name === 'UnauthorizedError') {
-        errorMessage = "API key is invalid or has expired (401 Unauthorized)";
-      } else if (error instanceof Error && error.name === 'TooManyRequestsError') {
-        errorMessage = "API quota exceeded or rate limit reached (429 Too Many Requests)";
-      }
-      
+    } catch (error) {
+      const endTime = Date.now();
+      console.error(`Error in generateAudio after ${(endTime - startTime) / 1000} seconds:`, error);
       return {
         success: false,
         filePath,
-        error: `ElevenLabs API error: ${errorMessage}`
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }
   }

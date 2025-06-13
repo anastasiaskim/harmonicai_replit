@@ -13,6 +13,7 @@ type GenerationProgress = {
 
 interface GenerateSectionProps {
   onGenerate: () => void;
+  onCancel: () => void;
   isGenerating: boolean;
   isDisabled: boolean;
   progress: GenerationProgress;
@@ -20,6 +21,7 @@ interface GenerateSectionProps {
 
 const GenerateSection: React.FC<GenerateSectionProps> = ({
   onGenerate,
+  onCancel,
   isGenerating,
   isDisabled,
   progress
@@ -35,7 +37,7 @@ const GenerateSection: React.FC<GenerateSectionProps> = ({
   const getStatusMessage = () => {
     switch (safeProgress.status) {
       case 'generating':
-        return `Processing chapter ${safeProgress.current} of ${safeProgress.total}`;
+        return `Processing chapter ${safeProgress.current + 1} of ${safeProgress.total}`;
       case 'complete':
         return 'Generation complete!';
       case 'error':
@@ -54,14 +56,25 @@ const GenerateSection: React.FC<GenerateSectionProps> = ({
               <h3 className="font-medium text-gray-800">Ready to create your audiobook?</h3>
               <p className="text-sm text-gray-500">Your text will be split into chapters and processed</p>
             </div>
-            <Button 
-              onClick={onGenerate}
-              disabled={isDisabled || isGenerating}
-              className="bg-primary hover:bg-primary/90"
-            >
-              <Sparkles className="h-4 w-4 mr-2" />
-              Generate Audiobook
-            </Button>
+            {isGenerating ? (
+              <Button 
+                onClick={onCancel}
+                variant="destructive"
+                className="bg-red-600 hover:bg-red-700"
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Cancel Generation
+              </Button>
+            ) : (
+              <Button 
+                onClick={onGenerate}
+                disabled={isDisabled}
+                className="bg-primary hover:bg-primary/90"
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                Generate Audiobook
+              </Button>
+            )}
           </div>
           
           {isDisabled && (

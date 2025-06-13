@@ -9,6 +9,7 @@ import { audioService } from './audioService';
 import { storageService } from './storageService';
 import { v4 as uuid } from 'uuid';
 import * as path from 'path';
+import Redis from 'ioredis';
 
 // Define job types
 export interface TTSJob {
@@ -24,32 +25,92 @@ export interface TTSJob {
 }
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-export const ttsQueue = new Bull<TextToSpeechRequest>('tts-jobs', redisUrl);
+
+// Create queue with basic configuration
+export const ttsQueue = new Bull<TextToSpeechRequest>('tts-jobs', redisUrl, {
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 5000 // 5 seconds
+    },
+    removeOnComplete: true,
+    removeOnFail: false,
+    timeout: 30 * 60 * 1000, // 30 minutes
+  }
+});
+
+// Add queue event handlers for better error tracking
+ttsQueue.on('error', (error) => {
+  console.error('Queue error:', error);
+});
+
+ttsQueue.on('failed', (job, error) => {
+  console.error(`Job ${job.id} failed:`, error);
+  console.error('Job data:', JSON.stringify(job.data, null, 2));
+  console.error('Stack trace:', error.stack);
+});
+
+ttsQueue.on('stalled', (job) => {
+  console.warn(`Job ${job.id} stalled`);
+  console.warn('Job data:', JSON.stringify(job.data, null, 2));
+});
+
+ttsQueue.on('waiting', (jobId) => {
+  console.log(`Job ${jobId} is waiting`);
+});
+
+ttsQueue.on('active', (job) => {
+  console.log(`Job ${job.id} has started processing`);
+  console.log('Processing chapters:', job.data.chapters?.map(c => c.title).join(', '));
+});
 
 // Process jobs
 ttsQueue.process(async (job) => {
-  const { request } = job.data;
+  const request = job.data;
+  const startTime = Date.now();
   
   try {
     // Update job status
     await job.progress(0);
+    console.log(`Starting job ${job.id} with ${request.chapters?.length || 0} chapters`);
     
     // Generate audio for each chapter
     const audioUrls = await Promise.all(
-      request.chapters.map(async (chapter: { text: string; title: string }) => {
-        const audioUrl = await audioService.convertTextToSpeech({
-          text: chapter.text,
-          voiceId: request.voiceId,
-          title: chapter.title
-        });
+      request.chapters?.map(async (chapter: { text: string; title: string }, index: number) => {
+        const chapterStartTime = Date.now();
+        console.log(`Processing chapter ${index + 1}/${request.chapters?.length}: ${chapter.title}`);
+        console.log(`Chapter text length: ${chapter.text.length} characters`);
         
-        // Upload to cloud storage
-        const key = `audio/${path.basename(audioUrl)}`;
-        await storageService.uploadFile(audioUrl, key, 'audio/mpeg');
-        
-        return storageService.getPublicUrl(key);
-      })
+        try {
+          const audioUrl = await audioService.convertTextToSpeech({
+            text: chapter.text,
+            voiceId: request.voiceId,
+            title: chapter.title
+          });
+          
+          // Upload to cloud storage
+          const key = `audio/${path.basename(audioUrl)}`;
+          const localAudioPath = path.join(process.cwd(), audioUrl.substring(1));
+          await storageService.uploadFile(localAudioPath, key, 'audio/mpeg');
+          
+          const chapterEndTime = Date.now();
+          console.log(`Chapter ${chapter.title} completed in ${(chapterEndTime - chapterStartTime) / 1000} seconds`);
+          
+          // Update progress
+          const progress = Math.round(((index + 1) / (request.chapters?.length || 1)) * 100);
+          await job.progress(progress);
+          
+          return storageService.getPublicUrl(key);
+        } catch (error) {
+          console.error(`Error processing chapter ${chapter.title}:`, error);
+          throw error;
+        }
+      }) || []
     );
+    
+    const endTime = Date.now();
+    console.log(`Job ${job.id} completed in ${(endTime - startTime) / 1000} seconds`);
     
     // Update job status
     await job.progress(100);
@@ -61,70 +122,100 @@ ttsQueue.process(async (job) => {
       }
     };
   } catch (error: any) {
-    console.error('Error processing TTS job:', error);
-    return {
-      status: 'failed',
-      result: {
-        error: error.message || 'Unknown error occurred'
-      }
-    };
+    const endTime = Date.now();
+    console.error(`Job ${job.id} failed after ${(endTime - startTime) / 1000} seconds:`, error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      jobId: job.id,
+      chapters: request.chapters?.map(c => c.title)
+    });
+    // Let Bull mark the job as failed so the `failed` event handler runs
+    throw error;
   }
 });
 
 // Queue event handlers
 ttsQueue.on('completed', async (job, result) => {
   console.log(`Job ${job.id} completed:`, result);
-  await queueService.updateJobStatus(job.id.toString(), {
-    status: 'completed',
-    audioUrls: result.result.audioUrls,
-    progress: 100,
-    processedChapters: job.data.request.chapters?.length || 1,
-    createdAt: job.timestamp.toString(),
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    await queueService.updateJobStatus(job.id.toString(), {
+      status: 'completed',
+      audioUrls: result.result.audioUrls,
+      progress: 100,
+      processedChapters: job.data.chapters?.length || 1,
+      createdAt: job.timestamp.toString(),
+      updatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error updating job status:', error);
+  }
 });
 
 ttsQueue.on('failed', async (job, error) => {
   console.error(`Job ${job.id} failed:`, error);
-  await queueService.updateJobStatus(job.id.toString(), {
-    status: 'failed',
-    error: error.message || 'Unknown error occurred',
-    progress: job.progress(),
-    processedChapters: job.data.request.chapters?.length || 1,
-    createdAt: job.timestamp.toString(),
-    updatedAt: new Date().toISOString()
-  });
+  try {
+    const progress = await job.progress();
+    await queueService.updateJobStatus(job.id.toString(), {
+      status: 'failed',
+      error: error.message || 'Unknown error occurred',
+      progress,
+      processedChapters: job.data.chapters?.length || 1,
+      createdAt: job.timestamp.toString(),
+      updatedAt: new Date().toISOString()
+    });
+  } catch (updateError) {
+    console.error('Error updating failed job status:', updateError);
+  }
 });
 
 export class QueueService {
   async addTTSJob(request: TextToSpeechRequest, userId: string): Promise<{ jobId: string }> {
-    // Create job record in Supabase
-    const now = new Date().toISOString();
-    const { data, error } = await supabaseAdmin
-      .from('tts_jobs')
-      .insert({
-        user_id: userId,
-        status: 'pending',
-        total_chapters: request.chapters?.length || 1,
-        processed_chapters: 0,
-        progress: 0,
-        created_at: now,
-        updated_at: now,
-      })
-      .select('id')
-      .single();
-    if (error || !data) throw error || new Error('Failed to create job record');
-    const jobId = data.id.toString();
-    
-    // Add job to queue
-    await ttsQueue.add(request, {
-      jobId,
-      attempts: 3,
-      removeOnComplete: true,
-      removeOnFail: false,
-      timeout: 5 * 60 * 1000, // 5 minutes
-    });
-    return { jobId };
+    try {
+      // Create job record in Supabase
+      const now = new Date().toISOString();
+      const { data, error } = await supabaseAdmin
+        .from('tts_jobs')
+        .insert({
+          user_id: userId,
+          status: 'pending',
+          total_chapters: request.chapters?.length || 1,
+          processed_chapters: 0,
+          progress: 0,
+          created_at: now,
+          updated_at: now,
+        })
+        .select('id')
+        .single();
+      
+      if (error || !data) {
+        throw error || new Error('Failed to create job record');
+      }
+      
+      const jobId = data.id.toString();
+      
+      // Add job to queue with retry handling
+      try {
+        await ttsQueue.add(request, {
+          jobId,
+          attempts: 1, // Reduce to 1 attempt
+          removeOnComplete: true,
+          removeOnFail: false,
+          timeout: 15 * 60 * 1000, // 15 minutes
+        });
+        return { jobId };
+      } catch (queueError) {
+        // If queue operation fails, clean up the Supabase record
+        await supabaseAdmin
+          .from('tts_jobs')
+          .delete()
+          .eq('id', jobId);
+        throw queueError;
+      }
+    } catch (error) {
+      console.error('Error adding TTS job:', error);
+      throw error;
+    }
   }
 
   async updateJobStatus(jobId: string, status: TTSJobStatus) {

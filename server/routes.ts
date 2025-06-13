@@ -9,6 +9,10 @@ import JSZip from "jszip";
 import { createClient } from '@supabase/supabase-js';
 import { userService } from './infrastructure/userService';
 import { SUBSCRIPTION_TIERS } from '@shared/schema';
+import { supabaseAdmin } from './infrastructure/supabaseClient';
+import { StorageService } from './infrastructure/storageService';
+import { PassThrough } from 'stream';
+import { ElevenLabsClient } from "elevenlabs";
 
 // Import domain layer
 import { textToSpeechSchema } from "../shared/schema";
@@ -25,7 +29,6 @@ import {
 import { fileService } from "./infrastructure/fileService";
 import { chapterService } from "./infrastructure/chapterService";
 import { audioService } from "./infrastructure/audioService";
-import { storageService } from "./infrastructure/storageService";
 import { queueService } from "./infrastructure/queueService";
 import { metricsService } from "./infrastructure/metricsService";
 
@@ -35,18 +38,6 @@ const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 if (missingEnvVars.length > 0) {
   throw new Error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
 }
-
-// Initialize Supabase admin client
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
 
 // Extend Express Request type to include user
 declare global {
@@ -78,20 +69,47 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+// Debug logging utility
+const debugLog = (message: string, data?: any) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[DEBUG] ${message}`, data ? data : '');
+  }
+};
+
+/**
+ * Maps a user's subscription tier to the correct enum key
+ * @param subscriptionTier The user's subscription tier from the database
+ * @returns The mapped subscription tier key or undefined if invalid
+ */
+function mapSubscriptionTier(subscriptionTier: string | null | undefined): keyof typeof SUBSCRIPTION_TIERS | undefined {
+  if (!subscriptionTier) {
+    return undefined;
+  }
+  
+  const upperTier = subscriptionTier.toUpperCase();
+  return upperTier in SUBSCRIPTION_TIERS ? upperTier as keyof typeof SUBSCRIPTION_TIERS : undefined;
+}
+
 // Authentication middleware
 async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
     const authHeader = req.headers.authorization;
+    debugLog('Auth header received', authHeader ? '[PRESENT]' : '[MISSING]');
     if (!authHeader) {
       return res.status(401).json({ error: 'No authorization header' });
     }
 
     const token = authHeader.split(' ')[1];
+    debugLog('Token received', token ? '[PRESENT]' : '[MISSING]');
     if (!token) {
       return res.status(401).json({ error: 'No token provided' });
     }
 
     const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    debugLog('Auth result', { 
+      user: user ? '[AUTHENTICATED]' : '[NOT AUTHENTICATED]',
+      error: error ? '[ERROR]' : '[NO ERROR]'
+    });
     if (error || !user) {
       return res.status(401).json({ error: 'Invalid token' });
     }
@@ -105,12 +123,18 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
       });
     }
 
-    // Attach user to request
-    req.user = userRecord;
+    // Attach user to request with correct enum mapping for subscriptionTier
+    req.user = {
+      ...userRecord,
+      subscriptionTier: mapSubscriptionTier(userRecord.subscriptionTier)
+    };
     next();
   } catch (error) {
     console.error('Auth error:', error);
-    res.status(500).json({ error: 'Authentication failed' });
+    const errorMessage = process.env.NODE_ENV === 'development' 
+      ? (error instanceof Error ? error.message : JSON.stringify(error))
+      : 'Internal server error';
+    res.status(500).json({ error: 'Authentication failed', details: errorMessage });
   }
 }
 
@@ -141,6 +165,14 @@ async function checkUsageLimit(req: Request, res: Response, next: NextFunction) 
   }
 }
 
+const storageService = new StorageService();
+
+const apiKey = process.env.ELEVENLABS_API_KEY;
+if (!apiKey) {
+  throw new Error("ElevenLabs API key not configured");
+}
+const elevenLabsClient = new ElevenLabsClient({ apiKey });
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Serve static files from public directory for the parser demo
   const publicPath = path.resolve(process.cwd(), 'public');
@@ -155,15 +187,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // API Endpoints (Presentation Layer for API)
   
+  // Debug: Log before registering /api/voices
+  console.log("Registering /api/voices route");
+
   // Get available voices
   app.get("/api/voices", async (_req: Request, res: Response) => {
+    console.log("GET /api/voices called");
     try {
       const voices = await getVoicesUseCase();
       res.json(voices);
     } catch (error) {
+      console.error("Error in /api/voices:", error);
       res.status(500).json({ error: "Failed to fetch voices" });
     }
   });
+
+  // Get a specific ElevenLabs voice by ID
+  app.get("/api/voices/:voiceId", requireAuth, async (req: Request, res: Response) => {
+     try {
+       const voiceId = req.params.voiceId;
+       const voice = await elevenLabsClient.voices.get(voiceId);
+       res.json(voice);
+     } catch (error) {
+       console.error("Error fetching voice:", error);
+       res.status(500).json({ error: "Failed to fetch voice" });
+     }
+   });
 
   // Upload ebook and extract text (Phase 2 Edge Function)
   app.post(
@@ -258,6 +307,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(500).json({ error: "Failed to queue TTS job" });
     }
   });
+
+  // Get TTS job status
+  app.get("/api/tts-job/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const jobId = req.params.id;
+      const { data: job, error: jobError } = await supabaseAdmin
+        .from('tts_jobs')
+        .select('user_id')
+        .eq('id', jobId)
+        .single();
+
+      if (jobError) {
+        console.error("Error fetching job:", jobError);
+        return res.status(500).json({ error: "Failed to fetch job details" });
+      }
+
+      if (!job || job.user_id !== req.user!.id) {
+        return res.status(403).json({ error: "Unauthorized access to job" });
+      }
+
+      const jobStatus = await queueService.getJobStatus(jobId);
+      
+      if (!jobStatus) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      res.json(jobStatus);
+    } catch (error) {
+      console.error("Error getting job status:", error);
+      if (error instanceof Error) {
+        return res.status(500).json({ error: error.message });
+      }
+      return res.status(500).json({ error: "Failed to get job status" });
+    }
+  });
   
   // Edge Function: Convert text directly to audio - REMOVED
 
@@ -286,21 +370,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Serve files from storage (uploads or audio)
-  app.get("/audio/:filename", (req: Request, res: Response) => {
-    const key = `audio/${req.params.filename}`;
+  app.get("/audio/:filename", async (req: Request, res: Response) => {
     try {
-      const fileData = storageService.serveFile(key);
-      if (!fileData || fileData.file.size === 0) {
-        return res.status(422).json({ error: "Audio file is missing or corrupted." });
+      const key = `audio/${req.params.filename}`;
+      const result = await storageService.serveFile(key);
+      
+      if (!result) {
+        return res.status(404).json({ error: 'File not found' });
       }
-      // Set appropriate headers
-      res.setHeader('Content-Type', fileData.file.mimeType);
-      res.setHeader('Content-Disposition', `attachment; filename=${fileData.file.fileName}`);
-      // Send the file
-      res.send(fileData.buffer);
-    } catch (error) {
-      console.error("Error serving file:", error);
-      return res.status(500).json({ error: "Failed to serve file" });
+      
+      res.setHeader('Content-Type', result.file.mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename=${result.file.fileName}`);
+      res.setHeader('Content-Length', result.file.size);
+      
+      // Create a readable stream from the buffer
+      const bufferStream = new PassThrough();
+      bufferStream.end(result.buffer);
+      
+      // Handle stream errors before piping
+      bufferStream.on('error', (error: Error) => {
+        console.error('Error streaming file:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Error streaming file' });
+        }
+      });
+      
+      bufferStream.pipe(res);
+    } catch (error: unknown) {
+      console.error('Error serving file:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to serve file' });
+      }
     }
   });
   
@@ -394,152 +494,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const fileName = `${safeFileName(bookTitle)}.txt`;
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
+        res.setHeader('Content-Length', content.length);
         
-        // Send the single file to the client
-        console.log(`Sending single file: ${fileName} (${content.length} bytes)`);
+        // Send the single text file to the client
+        console.log(`Sending single text file: ${fileName} (${content.length} bytes)`);
         res.send(content);
       }
     } catch (error) {
-      console.error("Error creating chapter ZIP:", error);
-      if (error instanceof Error) {
-        return res.status(500).json({ error: error.message });
-      }
-      return res.status(500).json({ error: "Failed to create chapter files" });
-    }
-  });
-  
-  // Get analytics
-  app.get("/api/analytics", async (_req: Request, res: Response) => {
-    try {
-      const analytics = await getAnalyticsUseCase();
-      res.json(analytics);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch analytics" });
-    }
-  });
-  
-  // API endpoint to check if an API key exists and is valid
-  app.get("/api/check-secret", async (req: Request, res: Response) => {
-    try {
-      const { key } = req.query;
-      
-      if (!key || typeof key !== 'string') {
-        return res.status(400).json({ error: "Key parameter is required" });
-      }
-      
-      // Check if the environment variable exists
-      const apiKey = process.env[key];
-      const exists = !!apiKey && apiKey.length > 0;
-      
-      // For Eleven Labs specifically, test the key validity
-      if (key === 'ELEVENLABS_API_KEY') {
-        try {
-          // If the key doesn't exist, return exists=false immediately
-          if (!exists) {
-            return res.json({ exists, isValid: false });
-          }
-          
-          // Import and use the ElevenLabs service to check key validity
-          const { elevenLabsService } = await import('./infrastructure/elevenLabsService');
-          
-          // Force initialize the client with the current key
-          // This ensures we're checking with the most recent API key
-          let isValid = false;
-          try {
-            // Import dynamically to ensure compatibility with ESM
-            const elevenlabs = await import('elevenlabs');
-            const client = new elevenlabs.ElevenLabs({
-              apiKey: apiKey
-            });
-            
-            const voices = await client.voices.getAll();
-            isValid = !!voices;
-            console.log("API key validation successful");
-          } catch (err) {
-            console.error("API key validation error:", err);
-            isValid = false;
-          }
-          
-          return res.json({ exists, isValid });
-        } catch (error) {
-          console.error("Error testing ElevenLabs API key:", error);
-          return res.json({ exists, isValid: false });
-        }
-      }
-      
-      // For other keys, just return if they exist
-      return res.json({ exists });
-    } catch (error) {
-      console.error("Error checking secret:", error);
-      res.status(500).json({ error: "Failed to check secret" });
+      console.error("Error serving chapter ZIP:", error);
+      res.status(500).json({ error: "Failed to serve chapter ZIP" });
     }
   });
 
-  // Poll TTS job status
-  app.get('/api/tts/status/:jobId', async (req: Request, res: Response) => {
-    try {
-      const { jobId } = req.params;
-      const status = await queueService.getJobStatus(jobId);
-      if (!status) {
-        return res.status(404).json({ error: 'Job not found' });
-      }
-      res.json(status);
-    } catch (error) {
-      console.error('Error fetching TTS job status:', error);
-      res.status(500).json({ error: 'Failed to fetch job status' });
-    }
-  });
-
-  // Cancel TTS job
-  app.post('/api/tts/cancel/:jobId', async (req: Request, res: Response) => {
-    try {
-      const { jobId } = req.params;
-      const success = await queueService.cancelJob(jobId);
-      if (!success) {
-        return res.status(404).json({ error: 'Job not found or already completed' });
-      }
-      res.json({ success: true, message: 'Job cancelled successfully' });
-    } catch (error) {
-      console.error('Error cancelling TTS job:', error);
-      res.status(500).json({ error: 'Failed to cancel job' });
-    }
-  });
-
-  // Get queue and worker metrics
-  app.get('/api/metrics', async (_req: Request, res: Response) => {
-    try {
-      const metrics = await metricsService.getLatestMetrics();
-      if (!metrics) {
-        return res.status(404).json({ error: 'No metrics available' });
-      }
-      res.json(metrics);
-    } catch (error) {
-      console.error('Error fetching metrics:', error);
-      res.status(500).json({ error: 'Failed to fetch metrics' });
-    }
-  });
-
-  // Start metrics collection
-  app.post('/api/metrics/start', async (_req: Request, res: Response) => {
-    try {
-      await metricsService.startMetricsCollection();
-      res.json({ success: true, message: 'Metrics collection started' });
-    } catch (error) {
-      console.error('Error starting metrics collection:', error);
-      res.status(500).json({ error: 'Failed to start metrics collection' });
-    }
-  });
-
-  // Stop metrics collection
-  app.post('/api/metrics/stop', async (_req: Request, res: Response) => {
-    try {
-      await metricsService.stopMetricsCollection();
-      res.json({ success: true, message: 'Metrics collection stopped' });
-    } catch (error) {
-      console.error('Error stopping metrics collection:', error);
-      res.status(500).json({ error: 'Failed to stop metrics collection' });
-    }
-  });
+  app.get('/api/test', (_req, res) => res.json({ ok: true }));
 
   const httpServer = createServer(app);
   return httpServer;

@@ -95,8 +95,9 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
   // Function to fetch audio file as blob
   const fetchAudioBlob = async (url: string): Promise<Blob | null> => {
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Failed to fetch ${url}`);
+      const apiUrl = url.startsWith('/api') ? `${import.meta.env.VITE_API_URL}${url}` : url;
+      const response = await fetch(apiUrl);
+      if (!response.ok) throw new Error(`Failed to fetch ${apiUrl}`);
       return await response.blob();
     } catch (error) {
       console.error('Error fetching audio file:', error);
@@ -295,17 +296,18 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
           const chapterStatus = chapterProgress[index]?.status || 'idle';
           const statusProps = getStatusBadgeProps(chapterStatus);
           const ready = isChapterReady(index);
+          const uniqueKey = chapter.id != null ? chapter.id : `index-${index}`;
           
           return (
             <div 
-              key={chapter.id} 
+              key={uniqueKey} 
               className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:border-primary/30 transition-colors duration-200"
             >
               <div className="p-3">
                 <div className="flex justify-between items-center">
                   <h3 className="font-medium text-gray-800 truncate flex-1">{chapter.title}</h3>
                   {/* Per-chapter status badge with tooltip */}
-                  <TooltipProvider>
+                  <TooltipProvider key={`tooltip-${uniqueKey}`}>
                     <Tooltip>
                       <TooltipTrigger>
                         <span className={`ml-2 text-xs px-2 py-1 rounded-full font-semibold flex items-center ${statusProps.className}`}>
@@ -323,6 +325,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
                     </Tooltip>
                   </TooltipProvider>
                   <Button
+                    key={`play-button-${uniqueKey}`}
                     variant="ghost"
                     size="sm"
                     className={`text-primary hover:text-primary-dark hover:bg-primary/10 h-8 mr-1 transition-all duration-200 ${
@@ -346,7 +349,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
                 </div>
                 {/* Per-chapter progress bar */}
                 {chapterProgress[index] && chapterProgress[index].status === 'processing' && (
-                  <div className="w-full bg-gray-100 rounded h-2 mt-2">
+                  <div key={`progress-${uniqueKey}`} className="w-full bg-gray-100 rounded h-2 mt-2">
                     <div
                       className="bg-blue-400 h-2 rounded transition-all duration-300"
                       style={{ width: `${chapterProgress[index].percent}%` }}
@@ -355,7 +358,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
                 )}
                 {/* Error message if failed */}
                 {chapterProgress[index] && chapterProgress[index].status === 'failed' && chapterProgress[index].error && (
-                  <div className="text-xs text-red-600 mt-1">{chapterProgress[index].error}</div>
+                  <div key={`error-${uniqueKey}`} className="text-xs text-red-600 mt-1">{chapterProgress[index].error}</div>
                 )}
                 <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
                   <div className="flex items-center">
@@ -367,6 +370,7 @@ const ChaptersSection: React.FC<ChaptersSectionProps> = ({ chapters, chapterProg
                     {formatFileSize(chapter.size)}
                   </div>
                   <a 
+                    key={`download-${uniqueKey}`}
                     href={ready ? chapter.audioUrl || undefined : undefined}
                     download={ready ? `${chapter.title ? chapter.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'audio'}.mp3` : undefined}
                     className={`text-teal-600 hover:text-teal-700 flex items-center transition-all duration-200 ${

@@ -13,6 +13,9 @@ interface ChapterDownloadSectionProps {
   bookTitle?: string;
 }
 
+// Extract and validate API URL
+const API_URL = import.meta.env.VITE_API_URL;
+
 /**
  * Component for downloading individual chapters or all chapters as a zip file
  */
@@ -84,6 +87,16 @@ const ChapterDownloadSection: React.FC<ChapterDownloadSectionProps> = ({
   const serverSideDownload = async () => {
     if (chapters.length === 0) return;
 
+    // Safeguard: Check API_URL
+    if (!API_URL) {
+      toast({
+        title: "Configuration Error",
+        description: "API URL is not set. Please contact support or check your environment configuration.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setIsDownloading(true);
     setDownloadSuccess(false);
     
@@ -97,7 +110,7 @@ const ChapterDownloadSection: React.FC<ChapterDownloadSectionProps> = ({
       });
       
       // Make a POST request to the server-side endpoint
-      const response = await fetch('/api/download', {
+      const response = await fetch(`${API_URL}/api/download`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

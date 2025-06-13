@@ -69,25 +69,64 @@ A web-based application that converts text content into high-quality audiobooks 
 
 ## Getting Started
 
-1. Install dependencies:
+### 1. Install dependencies for both backend and frontend:
 ```bash
+cd harmonicai_replit
+npm install
+cd client
 npm install
 ```
 
-2. Start the development server:
-```bash
-npm run dev
-```
+### 2. Start the development servers (in two terminals):
+- **Backend:**
+  ```bash
+  cd harmonicai_replit
+  npm run dev
+  ```
+- **Frontend:**
+  ```bash
+  cd harmonicai_replit/client
+  npm run dev
+  ```
 
-3. Build for production:
+Or, use the root-level script (see below) to start both at once.
+
+### 3. Access your app:
+Open your browser to the port shown by the frontend (usually http://localhost:5173 or http://localhost:5176).
+
+### 4. Build for production:
 ```bash
 npm run build
 ```
 
-4. Start production server:
+### 5. Start production server:
 ```bash
 npm start
 ```
+
+## Running Both Servers with One Command
+
+You can use the `concurrently` package to start both backend and frontend servers with a single command. To set this up:
+
+1. Install concurrently at the root:
+   ```bash
+   npm install --save-dev concurrently
+   ```
+2. Add this script to your root `package.json`:
+   ```json
+   "scripts": {
+     "dev:all": "concurrently \"npm run dev\" \"cd client && npm run dev\""
+   }
+   ```
+3. Run both servers:
+   ```bash
+   npm run dev:all
+   ```
+
+## API URLs in Production
+
+- In development, use `/api/...` in your frontend code. The Vite dev server proxies these to the backend.
+- In production, make sure your frontend makes requests to the correct backend URL (e.g., `https://yourdomain.com/api/...`), or set up a reverse proxy to forward `/api` requests to your backend.
 
 ## Environment Variables
 
@@ -133,4 +172,34 @@ MIT
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request 
+5. Open a Pull Request
+
+## Production Reverse Proxy Example (Nginx)
+
+To deploy in production, use Nginx to serve your frontend and proxy API requests to your backend:
+
+```
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    root /path/to/frontend/dist;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://localhost:3000/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+- Replace `/path/to/frontend/dist` with your actual frontend build output path.
+- Make sure your backend is running on port 3000.
+- All `/api` requests will be proxied to the backend, everything else will be served as static files. 

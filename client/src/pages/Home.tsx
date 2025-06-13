@@ -7,17 +7,16 @@ import VoiceSelectionSection from '@/components/VoiceSelectionSection';
 import GenerateSection from '@/components/GenerateSection';
 import TextPreviewSection from '@/components/TextPreviewSection';
 import ChaptersSection from '@/components/ChaptersSection';
-
 import ChapterDownloadSection from '@/components/ChapterDownloadSection';
-
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
-import { extractBookTitle } from '@/lib/chapterDetection';
-
-type Chapter = {
-  title: string;
-  text: string;
-};
+import { extractBookTitle, Chapter as TextChapter } from '@/lib/chapterDetection';
+import axios from 'axios';
+import { supabase } from '@/lib/supabaseClient';
+import LoginModal from '@/components/LoginModal';
+import { useState, useEffect, useRef } from 'react';
+import { Session } from '@supabase/supabase-js';
+import { GeneratedChapter, AudioChapter } from '@/types/audio';
 
 type FileMetadata = {
   key: string;
@@ -29,7 +28,7 @@ type FileMetadata = {
 
 interface ProcessedResult {
   text: string;
-  chapters: Chapter[];
+  chapters: TextChapter[];
   charCount: number;
   fileMetadata?: FileMetadata | null;
   wasChunked: boolean;
@@ -46,14 +45,6 @@ interface Voice {
   style?: string;
 }
 
-type GeneratedChapter = {
-  id: number;
-  title: string;
-  audioUrl: string;
-  duration: number; // in seconds
-  size: number; // in bytes
-};
-
 type GenerationProgress = {
   current: number;
   total: number;
@@ -65,7 +56,7 @@ type ChapterProgress = { status: ChapterStatus; percent: number; error?: string 
 
 const Home = () => {
   const [text, setText] = React.useState<string>('');
-  const [chapters, setChapters] = React.useState<Chapter[]>([]);
+  const [chapters, setChapters] = React.useState<TextChapter[]>([]);
   const [fileMetadata, setFileMetadata] = React.useState<FileMetadata | null>(null);
   const [selectedVoice, setSelectedVoice] = React.useState<string>('rachel');
   const [isGenerating, setIsGenerating] = React.useState<boolean>(false);
@@ -80,12 +71,38 @@ const Home = () => {
     status: 'idle'
   });
   const [chapterProgress, setChapterProgress] = React.useState<ChapterProgress[]>([]);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const cancelTokenRef = useRef<AbortController | null>(null);
 
   const { toast } = useToast();
+
+  // Initialize session and set up auth state listener
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    // Listen for auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    // Cleanup subscription on unmount
+    return () => subscription.unsubscribe();
+  }, []);
 
   // Fetch available voices from the API
   const { data: voices, isLoading: isLoadingVoices } = useQuery({
     queryKey: ['/api/voices'],
+    queryFn: async () => {
+      const res = await axios.get(`${import.meta.env.VITE_API_URL}/api/voices`);
+      return res.data;
+    },
   });
 
   // Function to handle file uploads and text processing
@@ -167,23 +184,47 @@ const Home = () => {
 
   // Function to generate audiobook
   const handleGenerateAudiobook = async () => {
-    // Check if we have content to convert
-    if (!text || chapters.length === 0) {
+    if (!text || !selectedVoice) return;
+    
+    setIsGenerating(true);
+    setError(null);
+    cancelTokenRef.current = new AbortController();
+    setIsCancelling(false);
+    
+    let accessToken: string;
+
+    // Try to refresh the session before proceeding
+    try {
+      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        throw refreshError;
+      }
+      if (!refreshedSession?.access_token) {
+        throw new Error('No access token available after refresh');
+      }
+      setSession(refreshedSession);
+      accessToken = refreshedSession.access_token;
+    } catch (refreshErr) {
+      console.error('Error refreshing session:', refreshErr);
+      setLoginModalOpen(true);
+      toast({
+        title: 'Session Expired',
+        description: 'Please log in again to continue.',
+        variant: 'destructive',
+      });
+      setIsGenerating(false);
       return;
     }
 
     // Don't start another conversion if one is already in progress
     if (isGenerating) {
       toast({
-        title: "Processing",
-        description: "Conversion is already in progress. Please wait.",
+        title: 'Processing',
+        description: 'Conversion is already in progress. Please wait.',
       });
       return;
     }
 
-    setIsGenerating(true);
-    setError(null);
-    
     // Filter out chapters with empty text
     const nonEmptyChapters = chapters.filter(ch => ch.text && ch.text.trim().length > 0);
     if (nonEmptyChapters.length === 0) {
@@ -214,6 +255,7 @@ const Home = () => {
         title: "Processing Audiobook",
         description: `Starting to process ${nonEmptyChapters.length} chapters...`,
       });
+
       for (let i = 0; i < nonEmptyChapters.length; i++) {
         const chapter = nonEmptyChapters[i];
         // Update overall progress
@@ -232,200 +274,202 @@ const Home = () => {
 
         toast({
           title: "Processing Chapter",
-          description: `Converting chapter ${i+1} of ${nonEmptyChapters.length}: "${chapter.title}"`,
+          description: `Converting chapter ${i + 1} of ${nonEmptyChapters.length}: "${chapter.title}"`,
         });
 
         try {
-          const response = await fetch('/api/text-to-speech', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              chapters: [{ title: chapter.title, text: chapter.text }],
+          const response = await axios.post(
+            `${import.meta.env.VITE_API_URL}/api/text-to-speech`,
+            {
+              text: chapter.text,
               voiceId: selectedVoice,
-            }),
-          });
+              title: chapter.title,
+              chapters: [{
+                title: chapter.title,
+                text: chapter.text
+              }]
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              signal: cancelTokenRef.current.signal
+            }
+          );
 
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(
-              errorData.error || `Failed to generate audio for chapter "${chapter.title}"`
-            );
-          }
-
-          const data = await response.json();
-          if (data.success && data.chapters && data.chapters.length > 0) {
-            const generatedChapter = data.chapters[0];
-            processedChapters.push(generatedChapter);
+          const data = response.data;
+          if (data.success && data.jobId) {
+            let jobComplete = false;
+            let retryCount = 0;
+            const maxRetries = 12; // Reduced from 30 to 12
+            const baseDelay = 1000; // 1 second
+            const maxDelay = 3000; // 3 seconds max delay
             
-            // Update chapter progress to match the current state of processedChapters
-            setChapterProgress(prev => {
-              const updated = [...prev];
-              // Ensure the progress array matches the length of processedChapters
-              while (updated.length < processedChapters.length) {
-                updated.push({ status: 'idle', percent: 0 });
-              }
-              // Update the current chapter's status
-              updated[i] = { status: 'ready', percent: 100 };
-              return updated;
-            });
-
-            // Update overall progress only if not in error state
-            setGenerationProgress(prev => {
-              if (prev.status === 'error') return prev;
-              return {
-                ...prev,
-                current: i + 1,
-                status: i + 1 === nonEmptyChapters.length ? 'complete' : 'generating'
-              };
-            });
-
-            if (generatedChapter.size === 0) {
-              toast({
-                title: "API Limitation",
-                description: "ElevenLabs API quota exceeded. Using empty audio file as placeholder.",
-                variant: "destructive",
-              });
+            while (!jobComplete && retryCount < maxRetries && !isCancelling) {
               try {
-                const secretsResponse = await fetch('/api/check-secret?key=ELEVENLABS_API_KEY');
-                if (secretsResponse.ok) {
-                  const secretsData = await secretsResponse.json();
-                  if (!secretsData.exists) {
-                    toast({
-                      title: "API Key Missing",
-                      description: "Please provide a valid ElevenLabs API key to generate audio.",
-                      variant: "destructive",
-                    });
-                  } else if (secretsData.isValid === false) {
-                    toast({
-                      title: "API Key Invalid",
-                      description: "The ElevenLabs API key appears to be invalid or has expired.",
-                      variant: "destructive",
-                    });
+                const jobStatusResponse = await axios.get(
+                  `${import.meta.env.VITE_API_URL}/api/tts-job/${data.jobId}`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${accessToken}`,
+                    },
+                    signal: cancelTokenRef.current.signal
                   }
+                );
+                
+                const jobStatus = jobStatusResponse.data;
+                
+                if (jobStatus.status === 'completed' && jobStatus.audioUrls?.length > 0) {
+                  const generatedChapter = {
+                    id: i,
+                    title: chapter.title,
+                    audioUrl: jobStatus.audioUrls[0],
+                    duration: 0,
+                    size: 0
+                  };
+                  processedChapters.push(generatedChapter);
+                  jobComplete = true;
+                } else if (jobStatus.status === 'failed') {
+                  throw new Error(jobStatus.error || 'Job failed');
                 }
-              } catch (secretErr) {
-                console.error("Error checking API key status:", secretErr);
+                
+                // Update chapter progress with more detailed status
+                setChapterProgress(prev => {
+                  const updated = [...prev];
+                  updated[i] = { 
+                    status: jobStatus.status === 'completed' ? 'ready' : 'processing',
+                    percent: jobStatus.progress || 0
+                  };
+                  return updated;
+                });
+
+                // Show progress toast with retry count
+                toast({
+                  title: "Processing Chapter",
+                  description: `Chapter ${i + 1}/${nonEmptyChapters.length}: ${jobStatus.progress || 0}% complete (Attempt ${retryCount + 1}/${maxRetries})`,
+                  duration: 2000
+                });
+                
+                if (!jobComplete) {
+                  // Exponential backoff with jitter
+                  const exponentialDelay = Math.min(baseDelay * Math.pow(1.5, retryCount), maxDelay);
+                  const jitter = Math.random() * 500; // Add up to 0.5 seconds of random jitter
+                  await new Promise(resolve => setTimeout(resolve, exponentialDelay + jitter));
+                  retryCount++;
+                }
+              } catch (jobError) {
+                if (isCancelling) {
+                  throw new Error('Operation cancelled by user');
+                }
+                
+                console.error('Error checking job status:', jobError);
+                if (axios.isAxiosError(jobError) && !jobError.response) {
+                  const exponentialDelay = Math.min(baseDelay * Math.pow(1.5, retryCount), maxDelay);
+                  await new Promise(resolve => setTimeout(resolve, exponentialDelay));
+                  retryCount++;
+                  continue;
+                }
+                throw jobError;
               }
             }
+
+            if (!jobComplete && !isCancelling) {
+              throw new Error(`Job timed out after ${maxRetries} attempts`);
+            }
+          }
+        } catch (error) {
+          if (isCancelling) {
+            toast({
+              title: "Operation Cancelled",
+              description: "The audiobook generation was cancelled.",
+              variant: "destructive"
+            });
           } else {
+            console.error('Error processing chapter:', error);
             setChapterProgress(prev => {
               const updated = [...prev];
-              // Ensure the progress array matches the length of processedChapters
-              while (updated.length < processedChapters.length) {
-                updated.push({ status: 'idle', percent: 0 });
-              }
-              updated[i] = { status: 'failed', percent: 100, error: `Failed to process chapter "${chapter.title}"` };
+              updated[i] = { 
+                status: 'failed', 
+                percent: 0, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+              };
               return updated;
             });
-            throw new Error(`Failed to process chapter "${chapter.title}"`);
+            throw error;
           }
-        } catch (err: any) {
-          setChapterProgress(prev => {
-            const updated = [...prev];
-            // Ensure the progress array matches the length of processedChapters
-            while (updated.length < processedChapters.length) {
-              updated.push({ status: 'idle', percent: 0 });
-            }
-            updated[i] = { status: 'failed', percent: 100, error: err.message || 'Failed to generate audiobook' };
-            return updated;
-          });
-          setError(err.message || 'Failed to generate audiobook');
-          toast({
-            title: "Generation Failed",
-            description: err.message || 'An error occurred while generating the audiobook.',
-            variant: "destructive",
-          });
-          // Update overall progress to error state and break the processing loop
-          setGenerationProgress(prev => ({
-            ...prev,
-            status: 'error'
-          }));
-          break; // Exit the loop on first error
         }
       }
 
       // Update generated chapters state once after all processing is complete
       setGeneratedChapters(processedChapters);
 
+      // ✅ mark overall job complete
+      setGenerationProgress(prev => ({
+        ...prev,
+        current: processedChapters.length,
+        status: 'complete'
+      }));
       toast({
         title: "Audiobook Generated",
         description: `Successfully created ${processedChapters.length} audio chapters.`,
       });
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate audiobook');
-      toast({
-        title: "Generation Failed",
-        description: err.message || 'An error occurred while generating the audiobook.',
-        variant: "destructive",
-      });
-      // Update overall progress to error state
-      setGenerationProgress(prev => ({
-        ...prev,
-        status: 'error'
-      }));
+    } catch (error) {
+      console.error('Error generating audiobook:', error);
+      setError(error instanceof Error ? error.message : 'An error occurred while generating the audiobook');
+      setGenerationProgress(prev => ({ ...prev, status: 'error' }));
     } finally {
       setIsGenerating(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-dark-50 flex flex-col">
-      <Header />
-      
-      <main className="container mx-auto px-4 md:px-6 py-8 flex-grow">
-        <IntroSection />
-        
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Column - Input & Settings */}
-          <div className="lg:col-span-5 space-y-6">
-            <FileUploadSection onTextProcessed={handleTextProcessed} />
-            
-            <VoiceSelectionSection 
-              voices={(voices as Voice[]) || []} 
-              isLoading={isLoadingVoices}
-              selectedVoice={selectedVoice}
-              onVoiceSelect={handleVoiceSelect}
-            />
-            
-            <GenerateSection 
-              onGenerate={handleGenerateAudiobook}
-              isGenerating={isGenerating}
-              isDisabled={!text || chapters.length === 0}
-              progress={generationProgress}
-            />
-          </div>
-          
-          {/* Right Column - Preview & Results */}
-          <div className="lg:col-span-7">
-            <TextPreviewSection 
-              text={text}
-              chapters={chapters}
-              fileMetadata={fileMetadata}
-              error={error}
-              wasChunked={wasChunked}
-            />
+  const handleCancelGeneration = () => {
+    setIsCancelling(true);
+    if (cancelTokenRef.current) {
+      cancelTokenRef.current.abort();
+    }
+  };
 
-            
-            {/* Show chapter download section when chapters are available and chunking was successful */}
-            {chapters.length > 0 && wasChunked && (
-              <ChapterDownloadSection
-                chapters={chapters}
-                bookTitle={bookTitle}
-              />
-            )}
-            
-            {generatedChapters.length > 0 && (
-              <ChaptersSection 
-                chapters={generatedChapters}
-                chapterProgress={chapterProgress}
-              />
-            )}
-          </div>
-        </div>
+  return (
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      <Header />
+      <LoginModal isOpen={loginModalOpen} onClose={() => setLoginModalOpen(false)} />
+      <main className="flex-1 w-full max-w-3xl mx-auto px-4 py-8 space-y-8">
+        <IntroSection />
+        <FileUploadSection onTextProcessed={handleTextProcessed} />
+        <VoiceSelectionSection
+          selectedVoice={selectedVoice}
+          onVoiceSelect={handleVoiceSelect}
+          voices={voices}
+          isLoading={isLoadingVoices}
+        />
+        <GenerateSection
+          isGenerating={isGenerating}
+          onGenerate={handleGenerateAudiobook}
+          onCancel={handleCancelGeneration}
+          isDisabled={!text || chapters.length === 0}
+          progress={generationProgress}
+        />
+        <TextPreviewSection
+          text={text}
+          chapters={chapters}
+        />
+        <ChaptersSection
+          chapters={chapters.map((ch, index) => ({
+            id: index,
+            title: ch.title,
+            text: ch.text,
+            audioUrl: '',
+            duration: 0,
+            size: 0
+          }))}
+          chapterProgress={chapterProgress}
+        />
+        <ChapterDownloadSection
+          chapters={generatedChapters}
+          bookTitle={text ? `Generated Audiobook - ${new Date().toLocaleDateString()}` : undefined}
+        />
       </main>
-      
       <Footer />
     </div>
   );

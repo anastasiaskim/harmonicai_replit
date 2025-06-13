@@ -170,19 +170,13 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
   };
   
   const processFile = useCallback(async (file: File) => {
-    // Reset previous states
-    resetState();
+    if (!validateFile(file)) return;
     
-    // Validate file before processing
-    if (!validateFile(file)) {
-      return;
-    }
-    
-    // Set the selected file for UI display
     setSelectedFile(file);
+    setError(null);
     
-    // Process EPUB files client-side
-    if (file.type === 'application/epub+zip') {
+    // For EPUB files, process client-side
+    if (file.name.toLowerCase().endsWith('.epub')) {
       await processEpubFile(file);
       return;
     }
@@ -194,7 +188,7 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
       const formData = new FormData();
       formData.append('file', file);
       
-      // Use the API endpoint
+      // Use the proxy configuration
       const response = await fetch('/api/upload-ebook', {
         method: 'POST',
         body: formData,
@@ -229,8 +223,15 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
           variant: "default"
         });
       }
-    } catch (err: any) {
-      const errorMessage = err.message || 'Failed to process file';
+    } catch (err: unknown) {
+      let errorMessage = 'Failed to process file';
+      
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      }
+      
       setError(errorMessage);
       onTextProcessed(null, errorMessage);
       toast({
@@ -264,11 +265,12 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
     }
   }, [processFile]);
 
-  const openFileSelector = () => {
+  const openFileSelector = useCallback(() => {
+    console.log("openFileSelector called", fileInputRef.current);
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
-  };
+  }, []);
 
   return (
     <div>
@@ -352,14 +354,13 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
           {/* Only show the drop zone if we're not in EPUB preview mode */}
           {!isEpubPreviewMode && (
             <div 
-              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-300 ${
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition-all duration-300 ${
                 selectedFile && !error ? 'mb-0' : 'mb-4'
               } ${
                 dragActive 
                   ? 'border-primary bg-primary/5' 
                   : 'border-gray-200 hover:border-primary hover:bg-gray-50'
               }`}
-              onClick={openFileSelector}
               onDragEnter={handleDrag}
               onDragOver={handleDrag}
               onDragLeave={handleDrag}
@@ -373,7 +374,7 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
               <p className="mt-2 text-gray-600 font-medium">
                 {selectedFile && !error
                   ? 'Upload a different file'
-                  : 'Drag & drop your file here or click to browse'
+                  : 'Drag & drop your file here'
                 }
               </p>
               <p className="text-sm text-gray-500 mt-1">
@@ -385,14 +386,23 @@ const FileUploadSection: React.FC<FileUploadSectionProps> = ({ onTextProcessed }
               <p className="text-xs text-gray-400 mt-1">
                 Supported formats: .txt, .epub, .pdf (Max 5MB)
               </p>
-              <input 
-                type="file" 
-                ref={fileInputRef}
-                className="hidden" 
-                accept=".txt,.epub,.pdf" 
-                onChange={handleFileChange}
-                disabled={isProcessing}
-              />
+              <div className="mt-4">
+                <button
+                  onClick={openFileSelector}
+                  className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? 'Processing...' : 'Choose File'}
+                </button>
+                <input 
+                  type="file" 
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept=".txt,.epub,.pdf" 
+                  onChange={handleFileChange}
+                  disabled={isProcessing}
+                />
+              </div>
             </div>
           )}
         </CardContent>

@@ -9,6 +9,7 @@ import { storage } from '../storage';
 import { ChapterDTO } from './chapterService';
 import { InsertChapter } from '@shared/schema';
 import { audioConfig } from '../../config/audio.config';
+import { toSnakeCase } from '../utils/toSnakeCase';
 
 // Helper function to ensure a directory exists
 function ensureDirectoryExists(dirPath: string) {
@@ -84,18 +85,22 @@ class AudioService {
    * @param maxChunkSize Maximum characters per chunk
    * @returns Array of text chunks
    */
-  private splitTextIntoChunks(text: string, maxChunkSize: number = audioConfig.maxChunkSize): string[] {
+  private splitTextIntoChunks(text: string, maxChunkSize: number = 3000): string[] {
     if (text.length <= maxChunkSize) {
       return [text];
     }
+    
+    console.log(`Splitting text of length ${text.length} into chunks of max size ${maxChunkSize}`);
     const chunks: string[] = [];
+    
     // Split by paragraphs first
     const paragraphs = text.split(/\n\n+/);
     let currentChunk = '';
+    
     for (const para of paragraphs) {
       if (para.length > maxChunkSize) {
         // Paragraph too long, split by sentences
-        const sentences = para.split(audioConfig.sentenceSplitRegex);
+        const sentences = para.split(/(?<=[.!?])\s+/);
         for (const sentence of sentences) {
           if (sentence.length > maxChunkSize) {
             // Sentence too long, split by words
@@ -135,7 +140,9 @@ class AudioService {
         }
       }
     }
+    
     if (currentChunk) chunks.push(currentChunk.trim());
+    
     // Final safety: split any overlong chunk at the character level
     const safeChunks: string[] = [];
     for (const chunk of chunks) {
@@ -148,6 +155,15 @@ class AudioService {
         safeChunks.push(chunk);
       }
     }
+    
+    // Add delay between chunks to avoid rate limiting
+    if (safeChunks.length > 1) {
+      console.log(`Split text into ${safeChunks.length} chunks for processing`);
+      for (let i = 0; i < safeChunks.length; i++) {
+        console.log(`Chunk ${i + 1}: ${safeChunks[i].length} characters`);
+      }
+    }
+    
     return safeChunks;
   }
 
@@ -155,15 +171,18 @@ class AudioService {
    * Convert text to speech using ElevenLabs API with chunking for large texts
    */
   async convertTextToSpeech(request: TextToSpeechRequest): Promise<string> {
+    const startTime = Date.now();
+    console.log(`Starting text-to-speech conversion for "${request.title}"`);
+    
     if (!this.elevenLabsConfig.apiKey) {
       throw new Error('ElevenLabs API key is not configured');
     }
 
-    // Step 1: Validate request parameters (empty check, voice check)
+    // Step 1: Validate request parameters
     this.validateTextToSpeechRequest(request);
 
     const { text, voiceId, title } = request;
-    const maxChunkSize = audioConfig.maxChunkSize || 10000;
+    const maxChunkSize = 3000; // Reduced from 5000 to 3000 for better reliability
 
     // Step 2: Chunk the text if needed
     const textChunks = this.splitTextIntoChunks(text, maxChunkSize);
@@ -188,39 +207,63 @@ class AudioService {
           console.log(`Audio file ${fileName} exists but is empty (size: ${stats.size} bytes), regenerating`);
         }
       }
+      
       ensureDirectoryExists(audioDir);
       try {
         const result = await elevenLabsService.generateAudio(textChunks[0], voiceId, fileName);
         if (result.success) {
           await this.updateVoiceAnalytics(voiceId);
+          const endTime = Date.now();
+          console.log(`Text-to-speech conversion completed in ${(endTime - startTime) / 1000} seconds`);
           return `${publicAudioPrefix}/${fileName}`;
         } else {
           throw new Error(result.error || 'Failed to generate audio');
         }
       } catch (error: any) {
-        // Log the error but re-throw it to trigger retry logic
         console.error('Error generating audio:', error);
         throw error;
       }
     } else {
       // Multiple chunks: generate audio for each chunk and concatenate
+      console.log(`Processing ${textChunks.length} chunks for "${title}"`);
       const chunkFileNames: string[] = [];
+      
       for (let i = 0; i < textChunks.length; i++) {
+        const chunkStartTime = Date.now();
+        console.log(`Processing chunk ${i + 1}/${textChunks.length} for "${title}"`);
+        
         const chunkFileName = elevenLabsService.generateUniqueFilename(`${title}_chunk${i+1}`, voiceId);
         const chunkFilePath = path.join(audioDir, chunkFileName);
+        
         if (!fs.existsSync(chunkFilePath) || fs.statSync(chunkFilePath).size === 0) {
           try {
             const result = await elevenLabsService.generateAudio(textChunks[i], voiceId, chunkFileName);
             if (!result.success) {
               throw new Error(result.error || `Failed to generate audio for chunk ${i+1}`);
             }
+            
+            const chunkEndTime = Date.now();
+            console.log(`Chunk ${i + 1} completed in ${(chunkEndTime - chunkStartTime) / 1000} seconds`);
+            
+            // Add a delay between chunks to avoid rate limiting
+            if (i < textChunks.length - 1) {
+              const delay = 2000; // 2 seconds
+              console.log(`Waiting ${delay}ms before processing next chunk...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
           } catch (error: any) {
-            throw new Error('Audio generation failed; error details: ' + error.message);
+            console.error(`Error processing chunk ${i + 1}:`, error);
+            throw error;
           }
+        } else {
+          console.log(`Using cached chunk ${i + 1}`);
         }
+        
         chunkFileNames.push(chunkFileName);
       }
+      
       // Concatenate all chunk files into one final file
+      console.log('Concatenating audio chunks...');
       ensureDirectoryExists(audioDir);
       
       // Create the final file with the first chunk
@@ -231,18 +274,41 @@ class AudioService {
         throw new Error(`First chunk file ${chunkFileNames[0]} not found`);
       }
 
-      // Sequentially append remaining chunks
+      // Sequentially append remaining chunks using streams
       for (let i = 1; i < chunkFileNames.length; i++) {
         const chunkFilePath = path.join(audioDir, chunkFileNames[i]);
-        if (fs.existsSync(chunkFilePath)) {
-          const chunkData = await fs.promises.readFile(chunkFilePath);
-          await fs.promises.appendFile(filePath, chunkData);
-        } else {
-          console.warn(`Chunk file ${chunkFileNames[i]} not found, skipping`);
+        try {
+          if (fs.existsSync(chunkFilePath)) {
+            await new Promise<void>((resolve, reject) => {
+              const readStream = fs.createReadStream(chunkFilePath);
+              const writeStream = fs.createWriteStream(filePath, { flags: 'a' });
+              
+              readStream.on('error', (error) => {
+                reject(new Error(`Error reading chunk ${i + 1}: ${error.message}`));
+              });
+              
+              writeStream.on('error', (error) => {
+                reject(new Error(`Error writing chunk ${i + 1}: ${error.message}`));
+              });
+              
+              writeStream.on('finish', () => {
+                console.log(`Appended chunk ${i + 1} to final file`);
+                resolve();
+              });
+              
+              readStream.pipe(writeStream);
+            });
+          } else {
+            console.warn(`Chunk file ${chunkFileNames[i]} not found, skipping`);
+          }
+        } catch (error) {
+          console.error(`Failed to append chunk ${i + 1}:`, error);
+          throw new Error(`Failed to concatenate audio chunks: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       
       // Clean up chunk files after successful concatenation
+      console.log('Cleaning up temporary chunk files...');
       for (const chunkFileName of chunkFileNames) {
         const chunkFilePath = path.join(audioDir, chunkFileName);
         if (fs.existsSync(chunkFilePath)) {
@@ -253,6 +319,8 @@ class AudioService {
       }
       
       await this.updateVoiceAnalytics(voiceId);
+      const endTime = Date.now();
+      console.log(`Text-to-speech conversion completed in ${(endTime - startTime) / 1000} seconds`);
       return `${publicAudioPrefix}/${fileName}`;
     }
   }

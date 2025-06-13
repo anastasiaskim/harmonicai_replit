@@ -53,6 +53,9 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
   // State to track the accurate duration after Web Audio API processing
   const [accurateDuration, setAccurateDuration] = useState<number | null>(null);
 
+  // Extract and validate API URL
+  const API_URL = import.meta.env.VITE_API_URL;
+
   // Effect to reset play state when chapter changes
   useEffect(() => {
     // Reset play state when chapter changes
@@ -89,8 +92,17 @@ const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
         
         const audioContext = new AudioContext();
         
-        // Fetch the audio file
-        const response = await fetch(audioUrl);
+        // Safely construct the API URL
+        let apiUrl = audioUrl;
+        if (audioUrl.startsWith('/api')) {
+          if (!API_URL) {
+            console.warn('VITE_API_URL is not set. Cannot fetch audio from API path:', audioUrl);
+            return 0;
+          }
+          apiUrl = `${API_URL}${audioUrl}`;
+        }
+        
+        const response = await fetch(apiUrl);
         if (!response.ok) {
           throw new Error(`Failed to fetch audio: ${response.status} ${response.statusText}`);
         }

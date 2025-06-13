@@ -1,5 +1,7 @@
-import { supabaseAdmin } from './supabaseClient';
+import { supabaseAdmin } from './supabaseClient.js';
 import { User, UsageLog, SUBSCRIPTION_TIERS } from '@shared/schema';
+
+ import { toSnakeCase } from '../utils/toSnakeCase.js';
 
 export class UserService {
   private static instance: UserService;
@@ -13,20 +15,21 @@ export class UserService {
     return UserService.instance;
   }
 
-  async createUser(authUser: { id: string; email: string }): Promise<User> {
+  async createUser(authUser: { id: string; email: string; subscriptionTier?: string }): Promise<User> {
     const now = new Date().toISOString();
+    const subscriptionTier = authUser.subscriptionTier || 'free';
     const { data, error } = await supabaseAdmin
       .from('users')
-      .insert({
+      .insert(toSnakeCase({
         id: authUser.id,
         email: authUser.email,
-        subscriptionTier: 'free',
-        usageQuota: SUBSCRIPTION_TIERS.FREE.characterLimit,
+        subscriptionTier,
+        usageQuota: SUBSCRIPTION_TIERS[subscriptionTier.toUpperCase() as keyof typeof SUBSCRIPTION_TIERS].characterLimit,
         usageCount: 0,
         lastUsageReset: now,
         createdAt: now,
         updatedAt: now,
-      })
+      }))
       .select()
       .single();
 
@@ -48,10 +51,10 @@ export class UserService {
   async updateUser(userId: string, updates: Partial<User>): Promise<User> {
     const { data, error } = await supabaseAdmin
       .from('users')
-      .update({
+      .update(toSnakeCase({
         ...updates,
         updatedAt: new Date().toISOString(),
-      })
+      }))
       .eq('id', userId)
       .select()
       .single();
@@ -72,14 +75,14 @@ export class UserService {
     const now = new Date().toISOString();
     const { error } = await supabaseAdmin
       .from('usage_logs')
-      .insert({
+      .insert(toSnakeCase({
         userId,
         action,
         characterCount,
         fileSize,
         metadata,
         createdAt: now,
-      });
+      }));
 
     if (error) throw error;
 
@@ -98,11 +101,11 @@ export class UserService {
 
     const { error } = await supabaseAdmin
       .from('users')
-      .update({
-        usageCount: needsReset ? characterCount : user.usageCount + characterCount,
+      .update(toSnakeCase({
+        usageCount: needsReset ? characterCount : (user.usageCount ?? 0) + characterCount,
         lastUsageReset: needsReset ? now.toISOString() : user.lastUsageReset,
         updatedAt: now.toISOString(),
-      })
+      }))
       .eq('id', userId);
 
     if (error) throw error;
@@ -112,11 +115,11 @@ export class UserService {
     const user = await this.getUser(userId);
     if (!user) throw new Error('User not found');
 
-    const tier = SUBSCRIPTION_TIERS[user.subscriptionTier.toUpperCase() as keyof typeof SUBSCRIPTION_TIERS];
+    const tier = SUBSCRIPTION_TIERS[(user.subscriptionTier ?? 'free').toUpperCase() as keyof typeof SUBSCRIPTION_TIERS];
     if (!tier) throw new Error('Invalid subscription tier');
 
     // Check if user has exceeded their monthly limit
-    if (user.usageCount + requiredCharacters > tier.characterLimit) {
+    if ((user.usageCount ?? 0) + requiredCharacters > tier.characterLimit) {
       return {
         allowed: false,
         message: `You have exceeded your monthly character limit. Please upgrade your subscription or wait until next month.`,

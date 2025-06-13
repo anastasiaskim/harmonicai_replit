@@ -1,5 +1,6 @@
 import { ttsQueue } from './queueService';
 import { supabaseAdmin } from './supabaseClient';
+import { toSnakeCase } from '../utils/toSnakeCase';
 
 export interface QueueMetrics {
   waiting: number;
@@ -59,12 +60,12 @@ export class MetricsService {
       const workerMetrics = await this.getWorkerMetrics();
       const now = new Date().toISOString();
 
-      await supabaseAdmin.from('metrics').insert({
-        queue_metrics: queueMetrics,
-        worker_metrics: workerMetrics,
-        created_at: now,
-        updated_at: now
-      });
+      await supabaseAdmin.from('metrics').insert(toSnakeCase({
+        queueMetrics,
+        workerMetrics,
+        createdAt: now,
+        updatedAt: now
+      }));
     } catch (error) {
       console.error('Error collecting metrics:', error);
     }
@@ -109,14 +110,14 @@ export class MetricsService {
 
         await supabaseAdmin
           .from('metrics')
-          .update({
+          .update(toSnakeCase({
             workerMetrics: {
               ...workerMetrics,
               processedJobs: totalJobs,
               averageProcessingTime: avgTime
             },
-            updated_at: now
-          })
+            updatedAt: now
+          }))
           .eq('id', metrics.id);
       }
     } catch (error) {

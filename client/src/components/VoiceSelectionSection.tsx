@@ -129,7 +129,13 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
   // Function to generate preview audio
   const generatePreview = async (voiceId: string, text: string): Promise<string> => {
     try {
-      const response = await axios.post('/api/preview-voice', {
+      // Validate API URL
+      const API_URL = import.meta.env.VITE_API_URL;
+      if (!API_URL) {
+        throw new Error('API URL is not configured. Please check your environment variables.');
+      }
+
+      const response = await axios.post(`${API_URL}/api/preview-voice`, {
         voiceId,
         text
       });
@@ -148,7 +154,9 @@ const VoiceSelectionSection: React.FC<VoiceSelectionSectionProps> = ({
 
       // Determine specific error message based on response
       let errorMessage = 'Failed to generate voice preview';
-      if (error.response) {
+      if (error.message === 'API URL is not configured. Please check your environment variables.') {
+        errorMessage = error.message;
+      } else if (error.response) {
         switch (error.response.status) {
           case 401:
             errorMessage = 'API key is invalid or missing';

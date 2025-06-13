@@ -6,6 +6,20 @@ import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
 
+// Logger utility
+const DEBUG = import.meta.env.MODE === 'development';
+
+const logger = {
+  debug: (...args: any[]) => {
+    if (DEBUG) {
+      console.log('[EPUB Parser]', ...args);
+    }
+  },
+  error: (...args: any[]) => {
+    console.error('[EPUB Parser]', ...args);
+  }
+};
+
 export interface EpubChapter {
   id: string;
   href: string;
@@ -31,19 +45,54 @@ export interface EpubParseResult {
   opfDirWithSlash?: string;
 }
 
+// Type definition for valid input types
+type EpubInput = 
+  | File 
+  | Blob 
+  | Buffer 
+  | { arrayBuffer: () => Promise<ArrayBuffer> }
+  | { bits: Buffer[] }
+  | Buffer[];
+
+// Type guards
+function isBufferArray(input: EpubInput): input is Buffer[] {
+  return Array.isArray(input) && input.length > 0 && Buffer.isBuffer(input[0]);
+}
+
+function isBitsArray(input: EpubInput): input is { bits: Buffer[] } {
+  return !Array.isArray(input) && 'bits' in input && Array.isArray(input.bits) && input.bits.length > 0 && Buffer.isBuffer(input.bits[0]);
+}
+
+function hasArrayBuffer(input: EpubInput): input is { arrayBuffer: () => Promise<ArrayBuffer> } {
+  return !Array.isArray(input) && 'arrayBuffer' in input && typeof input.arrayBuffer === 'function';
+}
+
 /**
  * Parse EPUB file client-side using JSZip and cheerio
+ * Supports various input types including File, Blob, Buffer, and custom buffer formats
  * 
- * @param file EPUB file to parse
+ * @param input EPUB file or data to parse. Can be:
+ *   - File: Standard browser File object
+ *   - Blob: Standard browser Blob object
+ *   - Buffer: Node.js Buffer
+ *   - { arrayBuffer: () => Promise<ArrayBuffer> }: Object with arrayBuffer method
+ *   - { bits: Buffer[] }: Object containing array of Buffers
+ *   - Buffer[]: Array of Buffers
  * @returns Promise with the parsed EPUB data
  */
-export async function parseEpubFile(file: File): Promise<EpubParseResult> {
+export async function parseEpubFile(input: EpubInput): Promise<EpubParseResult> {
   try {
-    const zip = await loadEpubZip(file);
+    logger.debug('Starting parseEpubFile...');
+    const zip = await loadEpubZip(input);
+    logger.debug('Zip loaded successfully.');
     const { opfPath, opfDirWithSlash, opfData } = await extractOpfInfo(zip);
+    logger.debug('OPF info extracted:', { opfPath, opfDirWithSlash });
     const { $opf, title, author } = extractMetadata(opfData);
+    logger.debug('Metadata extracted:', { title, author });
     const chapters = extractChapters($opf);
+    logger.debug('Chapters extracted:', chapters);
     const coverUrl = await extractCoverImage(zip, $opf, opfDirWithSlash);
+    logger.debug('Cover URL extracted:', coverUrl);
     
     // Track chapter loading errors
     const chapterErrors: string[] = [];
@@ -65,6 +114,7 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
 
     // If any chapters failed to load, include the errors in the result
     if (chapterErrors.length > 0) {
+      logger.debug('Some chapters failed to load:', chapterErrors);
       return {
         title,
         author,
@@ -72,13 +122,14 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
         metadata: { title, author, opfPath },
         coverUrl,
         content,
-        success: true,
+        success: false,
         zipInstance: zip,
         opfDirWithSlash,
         error: `Some chapters failed to load:\n${chapterErrors.join('\n')}`
       };
     }
 
+    logger.debug('All chapters loaded successfully.');
     return {
       title,
       author,
@@ -91,6 +142,7 @@ export async function parseEpubFile(file: File): Promise<EpubParseResult> {
       opfDirWithSlash
     };
   } catch (error) {
+    logger.error('Error in parseEpubFile:', error);
     return {
       title: '',
       author: '',
@@ -169,12 +221,185 @@ export async function loadChapterContent(zip: JSZip, opfDirWithSlash: string, ch
 }
 
 // Helper: Load and validate EPUB zip
-async function loadEpubZip(file: File): Promise<JSZip> {
-  const zip = new JSZip();
+async function loadEpubZip(file: EpubInput): Promise<JSZip> {
+  logger.debug('Loading EPUB zip file...');
+  logger.debug('File argument type:', typeof file);
+  logger.debug('File argument constructor:', file && file.constructor && file.constructor.name);
+  logger.debug('File argument keys:', file && Object.keys(file));
+  logger.debug('File argument:', file);
+
+  let arrayBuffer: ArrayBuffer;
+
   try {
-    return await zip.loadAsync(file);
-  } catch (e) {
-    throw new Error('Failed to read EPUB file: The file may be corrupted or not a valid ZIP archive.');
+    if (Buffer.isBuffer(file)) {
+      logger.debug('Processing single Buffer input');
+      // Validate buffer properties before access
+      if (!file.buffer || typeof file.byteOffset !== 'number' || typeof file.byteLength !== 'number') {
+        throw new Error('Invalid Buffer: Missing required properties');
+      }
+      // Use slice to create a view without copying
+      arrayBuffer = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
+      logger.debug('Single buffer size:', file.byteLength);
+    } else if (isBufferArray(file)) {
+      logger.debug('Processing Buffer array input');
+      logger.debug('Number of buffer segments:', file.length);
+      
+      // Validate all buffers before processing
+      for (let i = 0; i < file.length; i++) {
+        const buffer = file[i];
+        if (!buffer || !buffer.buffer || typeof buffer.byteOffset !== 'number' || typeof buffer.byteLength !== 'number') {
+          throw new Error(`Invalid Buffer at index ${i}: Missing required properties`);
+        }
+      }
+      
+      // Calculate total size needed
+      const totalSize = file.reduce((acc, buffer) => acc + buffer.byteLength, 0);
+      logger.debug('Total size needed:', totalSize);
+      
+      // Pre-allocate a single buffer
+      const combinedBuffer = new Uint8Array(totalSize);
+      
+      // Copy segments efficiently
+      let offset = 0;
+      for (let i = 0; i < file.length; i++) {
+        const buffer = file[i];
+        const segmentSize = buffer.byteLength;
+        logger.debug(`Copying segment ${i + 1}/${file.length}, size: ${segmentSize}, offset: ${offset}`);
+        
+        try {
+          // Use set with direct buffer view to avoid unnecessary copies
+          combinedBuffer.set(
+            new Uint8Array(buffer.buffer, buffer.byteOffset, segmentSize),
+            offset
+          );
+          offset += segmentSize;
+        } catch (error) {
+          logger.error(`Error copying buffer segment ${i + 1}:`, error);
+          throw new Error(`Failed to copy buffer segment ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+      
+      arrayBuffer = combinedBuffer.buffer;
+      logger.debug('Successfully combined all buffer segments');
+    } else if (isBitsArray(file)) {
+      logger.debug('Processing bits array input');
+      logger.debug('Number of bits segments:', file.bits.length);
+      
+      // Validate all bits buffers before processing
+      for (let i = 0; i < file.bits.length; i++) {
+        const buffer = file.bits[i];
+        if (!buffer || !buffer.buffer || typeof buffer.byteOffset !== 'number' || typeof buffer.byteLength !== 'number') {
+          throw new Error(`Invalid bits Buffer at index ${i}: Missing required properties`);
+        }
+      }
+      
+      // Calculate total size needed
+      const totalSize = file.bits.reduce((acc, buffer) => acc + buffer.byteLength, 0);
+      logger.debug('Total size needed:', totalSize);
+      
+      // Pre-allocate a single buffer
+      const combinedBuffer = new Uint8Array(totalSize);
+      
+      // Copy segments efficiently
+      let offset = 0;
+      for (let i = 0; i < file.bits.length; i++) {
+        const buffer = file.bits[i];
+        const segmentSize = buffer.byteLength;
+        logger.debug(`Copying bits segment ${i + 1}/${file.bits.length}, size: ${segmentSize}, offset: ${offset}`);
+        
+        try {
+          // Use set with direct buffer view to avoid unnecessary copies
+          combinedBuffer.set(
+            new Uint8Array(buffer.buffer, buffer.byteOffset, segmentSize),
+            offset
+          );
+          offset += segmentSize;
+        } catch (error) {
+          logger.error(`Error copying bits segment ${i + 1}:`, error);
+          throw new Error(`Failed to copy bits segment ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+      
+      arrayBuffer = combinedBuffer.buffer;
+      logger.debug('Successfully combined all bits segments');
+    } else if (hasArrayBuffer(file)) {
+      logger.debug('Processing ArrayBuffer input');
+      arrayBuffer = await file.arrayBuffer();
+      logger.debug('ArrayBuffer size:', arrayBuffer.byteLength);
+    } else {
+      throw new Error('Unsupported file type for EPUB loading');
+    }
+
+    logger.debug('Final ArrayBuffer size:', arrayBuffer.byteLength);
+    
+    // Enhanced ArrayBuffer validation
+    if (!arrayBuffer) {
+      throw new Error('Invalid file: ArrayBuffer is null or undefined');
+    }
+    
+    if (!(arrayBuffer instanceof ArrayBuffer)) {
+      throw new Error(`Invalid file: Expected ArrayBuffer but got ${Object.prototype.toString.call(arrayBuffer)}`);
+    }
+    
+    if (arrayBuffer.byteLength === 0) {
+      throw new Error('Invalid file: ArrayBuffer has zero length');
+    }
+    
+    // Attempt to load the zip file with enhanced error handling
+    try {
+      const zip = await JSZip.loadAsync(arrayBuffer);
+      
+      // Validate the loaded zip file
+      if (!zip || typeof zip.files !== 'object') {
+        throw new Error('Invalid zip file: Failed to load or parse zip structure');
+      }
+      
+      logger.debug('Successfully loaded zip file');
+      return zip;
+    } catch (error) {
+      logger.error('Error loading zip file:', error);
+      
+      // Enhance error message with more context
+      let errorMessage = 'Failed to load zip file';
+      
+      if (error instanceof Error) {
+        // Preserve the original error stack and message
+        errorMessage = `${errorMessage}: ${error.message}`;
+        
+        // Add specific error handling for common issues
+        if (error.message.includes('corrupt')) {
+          errorMessage += ' - The file appears to be corrupted';
+        } else if (error.message.includes('format')) {
+          errorMessage += ' - The file format is not a valid zip archive';
+        } else if (error.message.includes('memory')) {
+          errorMessage += ' - Insufficient memory to process the file';
+        }
+        
+        // Create a new error with the enhanced message but preserve the stack
+        const enhancedError = new Error(errorMessage);
+        enhancedError.stack = error.stack;
+        throw enhancedError;
+      } else {
+        // Handle non-Error objects
+        throw new Error(`${errorMessage}: ${String(error)}`);
+      }
+    }
+  } catch (error) {
+    // Log the full error details for debugging
+    logger.error('Error in loadEpubZip:', {
+      error,
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined
+    });
+    
+    // Rethrow with enhanced context
+    if (error instanceof Error) {
+      const enhancedError = new Error(`Failed to load EPUB file: ${error.message}`);
+      enhancedError.stack = error.stack;
+      throw enhancedError;
+    }
+    throw error;
   }
 }
 
@@ -206,77 +431,59 @@ async function extractOpfInfo(zip: JSZip): Promise<{ opfPath: string, opfDirWith
   } catch (e) {
     throw new Error('Failed to read OPF file: The file may be corrupted or unreadable.');
   }
+  // Debug logs
+  logger.debug('OPF Path:', opfPath);
+  logger.debug('OPF Directory with Slash:', opfDirWithSlash);
+  logger.debug('OPF Data:', opfData);
   return { opfPath, opfDirWithSlash, opfData };
 }
 
 // Helper: Extract metadata (title, author)
 function extractMetadata(opfData: string) {
   const $opf = cheerio.load(opfData, { xmlMode: true });
-  const title = $opf('title').text() || 'Untitled';
-  const author = $opf('creator').text() || 'Unknown Author';
+  // Debug: log the OPF XML
+  // eslint-disable-next-line no-console
+  logger.debug('OPF XML:', opfData);
+  
+  // Try with 'dc:' prefix first, then fall back to non-prefixed selectors
+  const title = $opf('dc\\:title').first().text() || $opf('title').first().text() || 'Untitled';
+  const author = $opf('dc\\:creator').first().text() || $opf('creator').first().text() || 'Unknown Author';
+  
+  // eslint-disable-next-line no-console
+  logger.debug('Extracted title:', title, 'author:', author);
   return { $opf, title, author };
 }
 
 // Helper: Extract chapters/TOC
 function extractChapters($opf: CheerioAPI): EpubChapter[] {
-  // Find the NCX file
-  const ncxId = $opf('spine').attr('toc');
-  let ncxPath: string | undefined;
-  if (ncxId) {
-    $opf('manifest item').each((_, item) => {
-      const $item = $opf(item);
-      if ($item.attr('id') === ncxId) {
-        ncxPath = $item.attr('href');
-        return false;
-      }
-    });
-  }
-  if (!ncxPath) {
-    $opf('manifest item').each((_, item) => {
-      const $item = $opf(item);
-      const mediaType = $item.attr('media-type');
-      const href = $item.attr('href');
-      if (mediaType === 'application/x-dtbncx+xml' && href) {
-        ncxPath = href;
-        return false;
-      }
-    });
-  }
   const chapters: EpubChapter[] = [];
-  // If NCX found, parse navPoints
-  // (We cannot parse the NCX here without the zip, so fallback to spine)
-  // Get the spine order
-  const spineItemrefs: string[] = [];
-  $opf('spine itemref').each((_, itemref) => {
-    const idref = $opf(itemref).attr('idref');
-    if (idref) spineItemrefs.push(idref);
-  });
-  // Get the manifest items
-  const manifestItems = new Map<string, {href: string, mediaType: string}>();
-  $opf('manifest item').each((_, item) => {
-    const $item = $opf(item);
-    const id = $item.attr('id');
-    const href = $item.attr('href');
-    const mediaType = $item.attr('media-type');
-    if (id && href && mediaType?.includes('html')) {
-      manifestItems.set(id, {href, mediaType});
+  const spine = $opf('spine');
+  const manifest = $opf('manifest');
+  const manifestItems = new Map<string, { href: string, title?: string }>();
+  manifest.find('item').each((_, item) => {
+    const id = $opf(item).attr('id');
+    const href = $opf(item).attr('href');
+    if (id && href) {
+      manifestItems.set(id, { href });
     }
   });
-  // Follow the spine order to get chapters
-  let index = 0;
-  for (const idref of spineItemrefs) {
-    const item = manifestItems.get(idref);
-    if (item) {
+  spine.find('itemref').each((index, itemref) => {
+    const idref = $opf(itemref).attr('idref');
+    if (idref && manifestItems.has(idref)) {
+      const { href } = manifestItems.get(idref)!;
       chapters.push({
         id: idref,
-        href: item.href,
+        href,
         title: `Chapter ${index + 1}`,
         level: 0,
-        index: index++,
+        index,
         source: 'spine'
       });
     }
-  }
+  });
+  // Debug logs
+  logger.debug('Manifest Items:', Array.from(manifestItems.entries()));
+  logger.debug('Extracted Chapters:', chapters);
   return chapters;
 }
 
